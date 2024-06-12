@@ -1,0 +1,28 @@
+%YAML 1.2
+---
+name: Custom Syntax Highlighting
+file_extensions:
+  - txs
+scope: text.txs
+contexts:
+  main:
+    - match: '___'
+      embed: scope:source.js
+      escape: '___'
+    - match: '__'
+      embed: inline_js_mode
+      escape: '__'
+    - match: '\$+'
+      push: math_mode
+    - include: scope:text.tex.latex
+
+  math_mode:
+    - match: '__'
+      embed: inline_js_mode
+      escape: '__'
+    - match: '\$+'
+      pop: true
+    - include: scope:text.tex.latex
+
+  inline_js_mode:
+    - include: scope:source.js
