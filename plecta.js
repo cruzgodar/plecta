@@ -36,6 +36,11 @@ function txsToTex(filename, recursive)
 		});
 	}
 
+	else if (tex.match(/\\input\{[^\s]+?\.txs\}/))
+	{
+		console.warn(`File ${filename} inputs a .txs file; did you mean to run Plecta recursively with -r?`);
+	}
+
 	const texWithoutDeclarations = tex.replaceAll(/\n___([\s\S]+?)___/g, (match, $1) =>
 	{
 		declarationBlocks.push($1);

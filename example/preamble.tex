@@ -25,6 +25,11 @@
 % 
 % 	const numCols = rows[0].split(",").length;
 % 
-% 	return `\\left[ \\begin{array}{${"c".repeat(numCols)}} ${matrixString.replaceAll(/,/g, "&").replaceAll(/;/g, "\\\\")}\\end{array} \\right]`;
+% 	return "\\left[ \\begin{array}{"
+% 		+ "c".repeat(numCols)
+% 		+ "} "
+% 		+ matrixString.replaceAll(/,/g, " &")
+% 			.replaceAll(/;/g, "\\\\")
+% 		+ " \\end{array} \\right]";
 % }
 % ___
