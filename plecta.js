@@ -151,6 +151,11 @@ const filenames = args.filter(arg =>
 	return extension === "txs";
 });
 
+if (filenames.length === 0)
+{
+	console.error("Please provide a .txs file.");
+}
+
 filenames.forEach(filename => txsToTex(filename, options.recursive));
 
 if (options.pdf)
