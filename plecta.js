@@ -59,40 +59,65 @@ function txsToTex(filename, recursive)
 			return varName;
 		});
 
-	const jsToEvaluate = declarationBlocks
-		.concat(evaluationBlocks.map((block, index) => `const _PLECTA_${index + minIndex} = ${block};`)).join("\n")
-		+ `\n\nreturn {${evaluationBlocks.map((block, index) => `_PLECTA_${index + minIndex}`).join(",")}}`;
+	const jsToEvaluate = declarationBlocks.join("\n") + `\nreturn function*()\n{\n`
+		+ evaluationBlocks.map(block => `\tyield ${block};`).join("\n")
+		+ "\n};";
 
-	const customFunction = new Function(jsToEvaluate);
-	const evaluatedVars = customFunction();
+	let generator;
 
-	const finalizedTex = texWithEvaluations
-		.replaceAll(/_PLECTA_([0-9]+)/g, (match, $1) =>
-		{
-			const index = parseInt($1);
-			const varName = `_PLECTA_${index}`;
+	try
+	{
+		const customFunction = new Function(jsToEvaluate);
+		generator = customFunction()();
+	}
 
-			if (index < minIndex)
+	catch(ex)
+	{
+		console.error(`Error in declaration blocks in ${filename}:`);
+		throw new Error(ex);
+	}
+
+	let indexCurrentlyEvaluating = 0;
+	let lineNumber;
+
+	try
+	{
+		const finalizedTex = texWithEvaluations
+			.replaceAll(/_PLECTA_([0-9]+)/g, (match, $1) =>
 			{
-				return varName;
-			}
+				const index = parseInt($1);
+				const varName = `_PLECTA_${index}`;
 
-			const evaluatedVar = evaluatedVars[varName];
+				if (index < minIndex)
+				{
+					return varName;
+				}
 
-			if (typeof evaluatedVar !== "number" && typeof evaluatedVar !== "string")
-			{
 				const charNumber = (new RegExp(varName)).exec(texWithEvaluations).index;
-				const lineNumber = (texWithEvaluations.slice(0, charNumber).match(/\n/g) || []).length + 1;
+				lineNumber = (texWithEvaluations.slice(0, charNumber).match(/\n/g) || []).length + 1;
 
-				console.warn(`Expression __${evaluationBlocks[index - minIndex]}__ on line ${lineNumber} evaluates to neither a number nor a string`);
-			}
+				const evaluatedVar = generator.next().value;
 
-			return evaluatedVar;
-		});
+				if (typeof evaluatedVar !== "number" && typeof evaluatedVar !== "string")
+				{
+					console.warn(`Expression __${evaluationBlocks[index - minIndex]}__ on line ${lineNumber} evaluates to neither a number nor a string`);
+				}
 
-	const outputFilename = filename.replace(".txs", ".tex");
+				return evaluatedVar;
 
-	fs.writeFileSync(outputFilename, finalizedTex);
+				indexCurrentlyEvaluating++;
+			});
+
+		const outputFilename = filename.replace(".txs", ".tex");
+
+		fs.writeFileSync(outputFilename, finalizedTex);
+	}
+
+	catch(ex)
+	{
+		console.error(`Error evaluating expression __${evaluationBlocks[indexCurrentlyEvaluating - minIndex]}__ on line ${lineNumber}:`);
+		throw new Error(ex);
+	}
 
 	return declarationBlocks;
 }
