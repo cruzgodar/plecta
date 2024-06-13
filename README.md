@@ -7,30 +7,30 @@ Plecta files have the `.txs` extension (for TeXScript), which are a superset of 
 
 Plecta adds two different constructs to Latex: **declaration blocks** and **expressions**. Beginning with the former, add a block bounded by three underscores to declare functions and variables that you'll use later in the document --- for example,
 ```js
-	___
-	// Converts strings of the form "1, 2 ; 3, 4" into e.g. 
-	// \left[ \begin{array}{cc} 1 & 2 \\ 3 & 4 \end{array} \right],
-	// using the first row to determine the number of columns.
-	function M(matrixString)
-	{
-		const rows = matrixString.split(";");
+___
+// Converts strings of the form "1, 2 ; 3, 4" into e.g. 
+// \left[ \begin{array}{cc} 1 & 2 \\ 3 & 4 \end{array} \right],
+// using the first row to determine the number of columns.
+function M(matrixString)
+{
+	const rows = matrixString.split(";");
 
-		const numCols = rows[0].split(",").length;
+	const numCols = rows[0].split(",").length;
 
-		return "\\left[ \\begin{array}{"
-			+ "c".repeat(numCols)
-			+ "} "
-			+ matrixString.replaceAll(/,/g, " &")
-				.replaceAll(/;/g, "\\\\")
-			+ " \\end{array} \\right]";
-	}
-	___
+	return "\\left[ \\begin{array}{"
+		+ "c".repeat(numCols)
+		+ "} "
+		+ matrixString.replaceAll(/,/g, " &")
+			.replaceAll(/;/g, "\\\\")
+		+ " \\end{array} \\right]";
+}
+___
 ```
 You'll typically need just a single block in the preamble, but you can add as many as you like, anywhere the document.
 
 The other construct Plecta adds is **expressions**: in the body of the `.txs` document, surround a snippet of code in two underscores to evaluate it and place the result into the document.
 ```
-	Usual text, and then a macro: $__M("1, 2 ; 3, 4 ; 5, 6")__$.
+Usual text, and then a macro: $__M("1, 2 ; 3, 4 ; 5, 6")__$.
 ```
 Internally, all declaration blocks are appended together in order, and then all expressions are wrapped in a generator function that yields them one-at-a-time. The whole block of JS is then evaluated, and the expressions in the Latex are replaced with their values, while the declaration blocks are commented out.
 
