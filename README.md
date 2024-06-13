@@ -1,11 +1,11 @@
 # Plecta
 Latex is a robust and incredibly versatile language, but it's not without its problems. While the language is technically Turing-complete, actually writing anything resembling a program is an exercise in frustration, even down to what should be straightforward macros. Plecta (Latin for weave) is a preprocessor that lets you break out of Latex and write freely in JavaScript, and since there are no required changes to your project structure, you can incorporate it at your own pace.
 
-Plecta files have the `.txs` extension (for TeXScript), which are a superset of standard `.tex` files. To get started, rename an existing `.tex` file to `.txs` or create a new one and start writing Latex as usual.
+Plecta files have the `.txs` extension (for TeXScript), whose syntax is a superset of standard `.tex` files. To get started, rename an existing `.tex` file to `.txs` or create a new one and start writing Latex as usual.
 
 ## Usage
 
-Plecta adds two different constructs to Latex: **declaration blocks** and **expressions**. Beginning with the former, add a block of JavaScript bounded by three underscores to declare functions and variables that you'll use later in the document --- for example,
+Plecta adds two different constructs to Latex: **declaration blocks** and **expressions**. Beginning with the former, add a block of JavaScript bounded by three underscores to declare functions and variables that you'll use later in the document — for example,
 ```js
 ___
 // Converts strings of the form "1, 2 ; 3, 4" into e.g. 
