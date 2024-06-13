@@ -5,7 +5,7 @@ Plecta files have the `.txs` extension (for TeXScript), which are a superset of 
 
 ## Usage
 
-Plecta adds two different constructs to Latex: **declaration blocks** and **expressions**. Beginning with the former, add a block bounded by three underscores to declare functions and variables that you'll use later in the document --- for example,
+Plecta adds two different constructs to Latex: **declaration blocks** and **expressions**. Beginning with the former, add a block of JavaScript bounded by three underscores to declare functions and variables that you'll use later in the document --- for example,
 ```js
 ___
 // Converts strings of the form "1, 2 ; 3, 4" into e.g. 
