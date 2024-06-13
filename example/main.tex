@@ -1,33 +1,4 @@
-\documentclass{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{amsmath}
-\usepackage{amsfonts}
-\usepackage{amssymb}
-\usepackage{enumitem}
-\usepackage{titlesec}
-\usepackage[total={6.5in, 9in}, heightrounded]{geometry}
-\setenumerate[0]{label=\alph*)}
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{8pt}
-\setlength\fboxsep{0pt}
-\renewcommand{\baselinestretch}{1.6}
-\titleformat{\section}
-{\normalfont \Large \bfseries \centering}{}{0pt}{}
-
-% ___
-% // Converts strings of the form "1, 2 ; 3, 4" into e.g. 
-% // \left[ \begin{array}{cc} 1 & 2 \\ 3 & 4 \end{array} \right],
-% // using the first row to determine the number of columns.
-% function M(matrixString)
-% {
-% 	const rows = matrixString.split(";");
-% 
-% 	const numCols = rows[0].split(",").length;
-% 
-% 	return `\\left[ \\begin{array}{${"c".repeat(numCols)}} ${matrixString.replaceAll(/,/g, "&").replaceAll(/;/g, "\\\\")}\\end{array} \\right]`;
-% }
-% ___
+\input{./preamble.tex}
 
 \title{Plecta Demo}
 \author{Cruz Godar}

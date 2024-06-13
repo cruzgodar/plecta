@@ -26,4 +26,4 @@ A straightforward Latex preprocessor that provides support for JavaScript macros
 
 Internally, all declaration blocks are appended together in order, and then all evaluation blocks are appended after them and stored in distinct reserved variable names. The whole block of JS is then evaluated, and the evaluation blocks in the Latex are replaced with their values, while the declaration blocks are commented out.
 
-3. Run `node plecta.js file.txs`, which converts the `.txs` to a `.tex` file and runs `pdflatex` on it. Alternatively, add `--nocompile` to skip the second step.
+3. Run `node plecta.js file.txs`, which converts the `.txs` to a `.tex` file. Alternatively, add `--pdf` to skip the second step.
