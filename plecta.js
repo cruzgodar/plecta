@@ -45,7 +45,7 @@ function txsToTex(filename, recursive)
 	{
 		declarationBlocks.push($1);
 
-		return match.replaceAll(/\n/g, "\n% ");
+		return match.replaceAll(/\n/g, "\n% ").replaceAll(/___/g, "");
 	});
 
 	const evaluationBlocks = [];
@@ -55,7 +55,7 @@ function txsToTex(filename, recursive)
 	const minIndex = (reservedVars?.reduce((acc, value) => Math.max(acc, parseInt(value[1])), -1) ?? -1) + 1;
 
 	const texWithEvaluations = texWithoutDeclarations
-		.replaceAll(/__([^\n]*?)__/g, (match, $1) =>
+		.replaceAll(/__([\s\S]+?)__/g, (match, $1) =>
 		{
 			const varName = `_PLECTA_${evaluationBlocks.length + minIndex}`;
 
