@@ -1,0 +1,22 @@
+{
+  "name": "plecta",
+  "version": "1.0.0",
+  "description": "A markdown-like language with JavaScript folding that can compile to HTML and LaTeX",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cruzgodar/plecta.git"
+  },
+  "author": "Cruz Godar",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/cruzgodar/plecta/issues"
+  },
+  "homepage": "https://github.com/cruzgodar/plecta#readme",
+  "dependencies": {
+    "ohm-js": "^17.5.0"
+  }
+}

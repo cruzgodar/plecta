@@ -1,0 +1,134 @@
+Markdown {
+  document = block* end
+
+
+  // ─── Block Elements ────────────────────────────
+
+  block = blankLine
+        | thematicBreak
+        | atxHeading
+        | fencedCodeBlock
+        | blockquote
+        | bulletListItem
+        | orderedListItem
+        | paragraph
+
+  blankLine = sp* newline
+
+  // Thematic break: 3+ identical markers with optional spaces
+  thematicBreak = sp? sp? sp? (starBreak | dashBreak | underscoreBreak)
+  starBreak = "*" sp* "*" sp* "*" (sp* "*")* sp* newline
+  dashBreak = "-" sp* "-" sp* "-" (sp* "-")* sp* newline
+  underscoreBreak = "_" sp* "_" sp* "_" (sp* "_")* sp* newline
+
+  // ATX heading: 1-6 # characters, then space, then content
+  atxHeading = "#" "#"? "#"? "#"? "#"? "#"? " " inline* newline?
+
+  // Fenced code block (backtick and tilde)
+  fencedCodeBlock = backtickCodeBlock | tildeCodeBlock
+
+  backtickCodeBlock = "```" ~"`" infoString newline backtickContent "```" ~"`" sp* (newline | end)
+  backtickContent = backtickLine*
+  backtickLine = ~("```" ~"`" sp* (newline | end)) (~newline any)* newline
+
+  tildeCodeBlock = "~~~" ~"~" infoString newline tildeContent "~~~" ~"~" sp* (newline | end)
+  tildeContent = tildeLine*
+  tildeLine = ~("~~~" ~"~" sp* (newline | end)) (~newline any)* newline
+
+  infoString = (~newline any)*
+
+  // Blockquote: lines starting with >
+  blockquote = blockquoteLine+
+  blockquoteLine = ">" " "? inline* newline?
+
+  // Unordered list
+  bulletListItem = bulletMarker " " inline* newline?
+  bulletMarker = "-" | "*" | "+"
+
+  // Ordered list
+  orderedListItem = digit+ ("." | ")") " " inline* newline?
+
+  // Paragraph: lines that don't start any other block type
+  paragraph = paragraphLine+
+  paragraphLine = ~blockStart inline+ newline?
+
+
+  // ─── Block Start Detection ─────────────────────
+  // Factored out so extending grammars can += new block types
+
+  blockStart = blankLine
+             | thematicBreak
+             | atxHeadingStart
+             | codeFenceStart
+             | blockquoteStart
+             | bulletListStart
+             | orderedListStart
+
+  atxHeadingStart = "#" "#"? "#"? "#"? "#"? "#"? " "
+  codeFenceStart = "```" ~"`" | "~~~" ~"~"
+  blockquoteStart = ">"
+  bulletListStart = ("-" | "*" | "+") " "
+  orderedListStart = digit+ ("." | ")") " "
+
+
+  // ─── Inline Elements ──────────────────────────
+
+  inline = escapedChar
+         | strongStar
+         | strongUnderscore
+         | emphasisStar
+         | emphasisUnderscore
+         | codeSpan
+         | image
+         | link
+         | autolink
+         | hardLineBreak
+         | textChar
+
+  // Strong emphasis
+  strongStar = "**" strongStarContent+ "**"
+  strongStarContent = emphasisStar | ~"**" ~newline inline
+
+  strongUnderscore = "__" strongUnderscoreContent+ "__"
+  strongUnderscoreContent = emphasisUnderscore | ~"__" ~newline inline
+
+  // Emphasis
+  emphasisStar = "*" ~"*" ~" " emphasisStarContent+ "*"
+  emphasisStarContent = strongStar | ~"*" ~newline inline
+
+  emphasisUnderscore = "_" ~"_" ~" " emphasisUnderscoreContent+ "_"
+  emphasisUnderscoreContent = strongUnderscore | ~"_" ~newline inline
+
+  // Code span (double backtick tried before single)
+  codeSpan = "``" (~"``" ~newline any)+ "``"
+           | "`" ~"`" (~"`" ~newline any)+ "`"
+
+  // Links: [text](url "title")
+  link = "[" linkText "]" "(" sp* linkDest (sp+ linkTitle)? sp* ")"
+  linkText = (~"]" ~newline any)*
+  linkDest = (~")" ~" " ~newline any)*
+  linkTitle = "\"" (~"\"" ~newline any)* "\""
+            | "'" (~"'" ~newline any)* "'"
+
+  // Images: ![alt](url "title")
+  image = "!" link
+
+  // Autolinks: <scheme:uri>
+  autolink = "<" letter+ ":" (~">" ~newline any)+ ">"
+
+  // Escaped character
+  escapedChar = "\\" ~newline any
+
+  // Hard line break
+  hardLineBreak = "  " sp* &newline  -- spaces
+                | "\\" &newline      -- backslash
+
+  // Fallback: any non-newline character
+  textChar = ~newline any
+
+
+  // ─── Helpers ───────────────────────────────────
+
+  newline = "\r\n" | "\n" | "\r"
+  sp = " " | "\t"
+}
