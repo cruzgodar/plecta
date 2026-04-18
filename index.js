@@ -2,13 +2,24 @@ const ohm = require("ohm-js");
 
 const grammar = String.raw`
 	plecta {
-		text = (italic | ~newline any)+
+		text = inline<end>*
 		
-		italic = "*" italicContent "*"
-		italicContent = (~"*" ~newline any)+
+		bold
+			= "**" ~"*" inline<"**">+ "**" ~"*"
+			| "__" ~"_" inline<"__">+ "__" ~"_"
+			
+		italic
+			= "*" ~"*" inline<"*">+ "*" ~"*"
+			| "_" ~"_" inline<"_">+ "_" ~"_"
+			
+		boldItalic
+			= "***" inline<"***">+ "***"
+			| "___" inline<"___">+ "___"
+		
+		inline<stop> = boldItalic | bold | italic | (~stop ~newline any)
 		
 		newline = "\r\n" | "\n" | "\r"
-	}
+		}
 `;
 
 const plecta = ohm.grammar(grammar);
