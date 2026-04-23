@@ -16,17 +16,29 @@ const grammar = String.raw`
 			= "*" ~"*" inline<"*">+ "*" ~"*"
 			| "_" ~"_" inline<"_">+ "_" ~"_"
 
-		code = "\`" ~"\`" inline<"\`">+ "\`" ~"\`"
+		link = "[" inline<"]">+ "]" "(" inlineRaw<")">+ ")" 
+		
+		// Code and math are non-folding
+		code = "\`" ~"\`" inlineRaw<"\`">+ "\`" ~"\`"
 
-		escape = "\\" ("@" | "*" | "_" | "\\")
+		math = "$" ~"$" inlineRaw<"$">+ "$" ~"$"
+		displayMath = "$$" inlineRaw<"$$">+ "$$"
+
+		escape = "\\" ("@" | "*" | "_" | "$" | "\`" | "\\")
 
 		inline<stop>
 			= boldItalic
 			| bold
 			| italic
 			| code
+			| math
+			| displayMath
+			| link
 			| escape
 			| (~stop ~newline any)
+
+		inlineRaw<stop>
+			= ("\\" ("\\" | stop) | ~stop ~newline any)
 
 		newline = "\r\n" | "\n" | "\r"
 	}
