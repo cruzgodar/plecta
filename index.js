@@ -2,7 +2,11 @@ const ohm = require("ohm-js");
 
 const grammar = String.raw`
 	plecta {
-		text = inline<end>*
+		document = (paragraph | twoOrMoreNewlines)+
+  
+  
+  
+		paragraph = (inline<(doubleNewline | end)> | newline ~newline)+
 
 		boldItalic
 			= "***" inline<"***">+ "***"
@@ -18,7 +22,6 @@ const grammar = String.raw`
 
 		link = "[" inline<"]">+ "]" "(" inlineRaw<")">+ ")" 
 		
-		// Code and math are non-folding
 		code = "\`" ~"\`" inlineRaw<"\`">+ "\`" ~"\`"
 
 		math = "$" ~"$" inlineRaw<"$">+ "$" ~"$"
@@ -37,10 +40,13 @@ const grammar = String.raw`
 			| escape
 			| (~stop ~newline any)
 
+		// Used for delimeters that aren't folding
 		inlineRaw<stop>
 			= ("\\" ("\\" | stop) | ~stop ~newline any)
 
 		newline = "\r\n" | "\n" | "\r"
+		doubleNewline = newline newline
+		twoOrMoreNewlines = doubleNewline newline*
 	}
 `;
 
