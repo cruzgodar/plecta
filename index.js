@@ -3,9 +3,13 @@ const ohm = require("ohm-js");
 const grammar = String.raw`
 	plecta {
 		document = (paragraph | twoOrMoreNewlines)+
-  
-  
-  
+
+
+		
+		heading = spaceOrTab* "#" "#"? "#"? "#"? "#"? "#"? spaceOrTab+ inline<(newline | end)>+
+
+
+	
 		paragraph = (inline<(doubleNewline | end)> | newline ~newline)+
 
 		boldItalic
@@ -47,6 +51,8 @@ const grammar = String.raw`
 		newline = "\r\n" | "\n" | "\r"
 		doubleNewline = newline newline
 		twoOrMoreNewlines = doubleNewline newline*
+
+		spaceOrTab = " " | "\t"
 	}
 `;
 
