@@ -1,0 +1,33 @@
+# Heading
+## subheading
+
+```js
+code
+```
+$$
+math
+$$
+
+@@@html
+declaration1
+@@@tex
+declaration2
+@@@
+
+- 1
+- 2
+- 3
+
+1. ordered
++  list
+
+<a
+	href="a"
+>
+	raw html
+</a>
+
+Paragraph with *italic*, **bold**, ***bolditalic***,
+`code`, $math$, $$displaystyle math$$, [link](somewhere),
+<span style="">html</span>, and escaped characters: \@x \*c\*
+\$ \` \<g>

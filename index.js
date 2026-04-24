@@ -4,7 +4,7 @@ const bt = "`";
 
 const grammar = String.raw`
 plecta {
-  document = chunk+
+  document = chunk*
   
   chunk
   	= heading
@@ -28,7 +28,7 @@ plecta {
       codeBlockBody
    	  newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
 	
-  codeBlockBody = (~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any)*
+  codeBlockBody = (functionCall | ~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any)*
   
   
   
@@ -37,7 +37,7 @@ plecta {
       displayMathBody
    	  newline spaceOrTab* "$$" &(newline | end)
 	
-  displayMathBody = (~(newline spaceOrTab* "$$" (newline | end)) any)*
+  displayMathBody = (functionCall | ~(newline spaceOrTab* "$$" (newline | end)) any)*
   
   
   
@@ -58,7 +58,7 @@ plecta {
   unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<(newline | end)>+
 
   orderedList = orderedItem (newline orderedItem)* &(newline | end)
-  orderedItem = spaceOrTab* digit+ "." spaceOrTab+ inline<(newline | end)>+
+  orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<(newline | end)>+
   orderedItemStarter
   	= (digit+ ".") --numeric
     | "+" 		   --plus
@@ -96,24 +96,25 @@ plecta {
   htmlCloseTag = "</" htmlTagName ">"
   htmlVoidTag<allowedInsides> = "<" htmlTagName htmlAttribute<allowedInsides>* htmlTagWs<allowedInsides>* "/"? ">"
   
-  htmlTagName = letter (letter | digit | "-")*
+  htmlTagName = (functionCall | letter) (functionCall | letter | digit | "-")*
   
   htmlAttribute<allowedInsides> = htmlTagWs<allowedInsides>+ htmlTagName ("=" htmlAttributeValue<allowedInsides>)?
   
   htmlAttributeValue<allowedInsides>
-    = "\"" (~"\"" allowedInsides)* "\""  --doubleQuote
-    | "'" (~"'" allowedInsides)* "'"     --singleQuote
-    | (~spaceOrTab ~newline ~">" any)+   --bare
+    = "\"" (functionCall | ~"\"" allowedInsides)* "\""  --doubleQuote
+    | "'" (functionCall | ~"'" allowedInsides)* "'"     --singleQuote
+    | (functionCall | ~spaceOrTab ~newline ~">" any)+   --bare
     
   htmlTagBody<allowedInsides>
     = htmlTag<allowedInsides>
+    | functionCall
     | (~htmlCloseTag allowedInsides)
     
   htmlTagWs<allowedInsides>
   	= spaceOrTab              --single
     | &allowedInsides newline --double
 
-  escape = "\\" ("@" | "*" | "_" | "$" | "${bt}" | "<" | ">" | "\\")
+  escape = "\\" ("*" | "_" | "$" | "${bt}" | "<" | ">" | "\\")
 
   inline<stop>
     = boldItalic
@@ -131,7 +132,8 @@ plecta {
   escapeRaw<stop> = "\\" ("\\" | stop)
 
   inlineRaw<stop>
-  	= escapeRaw<stop>
+    = functionCall
+  	| escapeRaw<stop>
     | (~stop ~newline any)
 
   newline = "\r\n" | "\n" | "\r"
@@ -142,11 +144,16 @@ plecta {
   
   
   functionCall
-    = "@(" (~space ~("[" | "{" | ")") any)* (parsedBlock | rawBlock)* ")" --wrapped
-  	| "@" (~space ~("[" | "{") any)* (parsedBlock | rawBlock)*      --bare
+    = "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
+    | "@" jsIdentifier (parsedBlock | rawBlock)*      --bare
+    | "\\@"                                           --escaped
+    
+  jsIdentifier = jsIdentifierStart jsIdentifierPart*
+  jsIdentifierStart = letter | "_" | "$"
+  jsIdentifierPart = jsIdentifierStart | digit
   
   parsedBlock = "[" inline<"]">+ "]"
-  rawBlock = "{" inlineRaw<"}">+ "}"
+  rawBlock = "{" (escapeRaw<"}"> | (~"}" ~newline any))+ "}"
 }
 `;
 
