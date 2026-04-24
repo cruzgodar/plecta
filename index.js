@@ -7,6 +7,7 @@ plecta {
 	chunk
 		= heading
 		| codeBlock
+		| displayMath
 		| paragraph
 		| twoOrMoreNewlines
 	
@@ -22,6 +23,15 @@ plecta {
 		newline spaceOrTab* "\`\`\`" &(newline | end)
 		
 	codeBlockBody = (~(newline spaceOrTab* "\`\`\`" (newline | end)) any)*
+
+
+
+	displayMath
+		= spaceOrTab* "$$" spaceOrTab* newline
+		displayMathBody
+		newline spaceOrTab* "$$" &(newline | end)
+		
+	displayMathBody = (~(newline spaceOrTab* "$$" (newline | end)) any)*
 	
 	
 	
