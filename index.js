@@ -10,11 +10,12 @@ plecta {
   	= heading
     | codeBlock
     | displayMath
+    | declarationBlock
     | unorderedList
     | orderedList
     | htmlTag<any>
+    | newline          // Needs to be above paragraph or else newlines will always lead to paragraphs
     | paragraph
-    | twoOrMoreNewlines
   
   
   
@@ -37,6 +38,19 @@ plecta {
    	  newline spaceOrTab* "$$" &(newline | end)
 	
   displayMathBody = (~(newline spaceOrTab* "$$" (newline | end)) any)*
+  
+  
+  
+  declarationBlock
+    = spaceOrTab* "@@@" spaceOrTab* alnum* spaceOrTab* newline
+    declarationBlockBody
+    declarationBlockTerminator
+
+  declarationBlockBody = (~(newline spaceOrTab* "@@@") any)*
+
+  declarationBlockTerminator
+    = newline spaceOrTab* "@@@" spaceOrTab* &(newline | end) --hard
+    | newline &(spaceOrTab* "@@@" spaceOrTab* alnum)         --soft
   
   
   
@@ -125,7 +139,6 @@ plecta {
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
-  twoOrMoreNewlines = doubleNewline (spaceOrTab* newline)*
   
   spaceOrTab = " " | "\t"
 }
