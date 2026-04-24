@@ -124,6 +124,7 @@ plecta {
     | inlineDisplayMath
     | link
     | htmlTag<~newline any>
+    | functionCall
     | escape
     | (~stop ~newline any)
     
@@ -132,15 +133,20 @@ plecta {
   inlineRaw<stop>
   	= escapeRaw<stop>
     | (~stop ~newline any)
-    
-  blockInteriorRaw<stop>
-  	= escapeRaw<stop>
-    | (~(newline spaceOrTab* stop) any)
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
   
   spaceOrTab = " " | "\t"
+  
+  
+  
+  functionCall
+    = "@(" (~space ~("[" | "{" | ")") any)* (parsedBlock | rawBlock)* ")" --wrapped
+  	| "@" (~space ~("[" | "{") any)* (parsedBlock | rawBlock)*      --bare
+  
+  parsedBlock = "[" inline<"]">+ "]"
+  rawBlock = "{" inlineRaw<"}">+ "}"
 }
 `;
 
