@@ -1,90 +1,133 @@
 const ohm = require("ohm-js");
 
+const bt = "`";
+
 const grammar = String.raw`
 plecta {
-	document = chunk+
+  document = chunk+
+  
+  chunk
+  	= heading
+    | codeBlock
+    | displayMath
+    | unorderedList
+    | orderedList
+    | htmlTag<any>
+    | paragraph
+    | twoOrMoreNewlines
+  
+  
+  
+  heading = spaceOrTab* "#" "#"? "#"? "#"? "#"? "#"? spaceOrTab+ inline<(newline | end)>+
+  
+  
+  
+  codeBlock
+    = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
+      codeBlockBody
+   	  newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
 	
-	chunk
-		= heading
-		| codeBlock
-		| displayMath
-		| paragraph
-		| twoOrMoreNewlines
+  codeBlockBody = (~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any)*
+  
+  
+  
+  displayMath
+    = spaceOrTab* "$$" spaceOrTab* newline
+      displayMathBody
+   	  newline spaceOrTab* "$$" &(newline | end)
 	
+  displayMathBody = (~(newline spaceOrTab* "$$" (newline | end)) any)*
+  
+  
+  
+  unorderedList = unorderedItem (newline unorderedItem)* &(newline | end)
+  unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<(newline | end)>+
+
+  orderedList = orderedItem (newline orderedItem)* &(newline | end)
+  orderedItem = spaceOrTab* digit+ "." spaceOrTab+ inline<(newline | end)>+
+  orderedItemStarter
+  	= (digit+ ".") --numeric
+    | "+" 		   --plus
+  
+  
+  
+  paragraph = (inline<(doubleNewline | end)> | newline ~newline)+
+
+  boldItalic
+    = "***" inline<"***">+ "***"
+    | "___" inline<"___">+ "___"
+
+  bold
+    = "**" ~"*" inline<"**">+ "**" ~"*"
+    | "__" ~"_" inline<"__">+ "__" ~"_"
+
+  italic
+    = "*" ~"*" inline<"*">+ "*" ~"*"
+    | "_" ~"_" inline<"_">+ "_" ~"_"
+  
+  link = "[" inline<"]">+ "]" "(" inlineRaw<")">+ ")" 
+
+  // Code and math are non-folding
+  code = "${bt}" ~"${bt}" inlineRaw<"${bt}">+ "${bt}" ~"${bt}"
+
+  inlineMath = "$" ~"$" inlineRaw<"$">+ "$" ~"$"
+  inlineDisplayMath = "$$" inlineRaw<"$$">+ "$$"
+  
+  // allowedInsides is either any for block-level tags or ~newline any for inline ones
+  htmlTag<allowedInsides>
+  	= htmlOpenTag<allowedInsides> htmlTagBody<allowedInsides>* htmlCloseTag --openClose
+    | htmlVoidTag<allowedInsides> --void
 	
-	
-	heading = spaceOrTab* "#" "#"? "#"? "#"? "#"? "#"? spaceOrTab+ inline<(newline | end)>+
-	
-	
-	
-	codeBlock
-		= spaceOrTab* "\`\`\`" spaceOrTab* alnum* spaceOrTab* newline
-		codeBlockBody
-		newline spaceOrTab* "\`\`\`" &(newline | end)
-		
-	codeBlockBody = (~(newline spaceOrTab* "\`\`\`" (newline | end)) any)*
+  htmlOpenTag<allowedInsides> = "<" htmlTagName htmlAttribute<allowedInsides>* htmlTagWs<allowedInsides>* ">"
+  htmlCloseTag = "</" htmlTagName ">"
+  htmlVoidTag<allowedInsides> = "<" htmlTagName htmlAttribute<allowedInsides>* htmlTagWs<allowedInsides>* "/"? ">"
+  
+  htmlTagName = letter (letter | digit | "-")*
+  
+  htmlAttribute<allowedInsides> = htmlTagWs<allowedInsides>+ htmlTagName ("=" htmlAttributeValue<allowedInsides>)?
+  
+  htmlAttributeValue<allowedInsides>
+    = "\"" (~"\"" allowedInsides)* "\""  --doubleQuote
+    | "'" (~"'" allowedInsides)* "'"     --singleQuote
+    | (~spaceOrTab ~newline ~">" any)+   --bare
+    
+  htmlTagBody<allowedInsides>
+    = htmlTag<allowedInsides>
+    | (~htmlCloseTag allowedInsides)
+    
+  htmlTagWs<allowedInsides>
+  	= spaceOrTab              --single
+    | &allowedInsides newline --double
 
+  escape = "\\" ("@" | "*" | "_" | "$" | "${bt}" | "<" | ">" | "\\")
 
+  inline<stop>
+    = boldItalic
+    | bold
+    | italic
+    | code
+    | inlineMath
+    | inlineDisplayMath
+    | link
+    | htmlTag<~newline any>
+    | escape
+    | (~stop ~newline any)
+    
+  escapeRaw<stop> = "\\" ("\\" | stop)
 
-	displayMath
-		= spaceOrTab* "$$" spaceOrTab* newline
-		displayMathBody
-		newline spaceOrTab* "$$" &(newline | end)
-		
-	displayMathBody = (~(newline spaceOrTab* "$$" (newline | end)) any)*
-	
-	
-	
-	paragraph = (inline<(doubleNewline | end)> | newline ~newline)+
+  inlineRaw<stop>
+  	= escapeRaw<stop>
+    | (~stop ~newline any)
+    
+  blockInteriorRaw<stop>
+  	= escapeRaw<stop>
+    | (~(newline spaceOrTab* stop) any)
 
-	boldItalic
-		= "***" inline<"***">+ "***"
-		| "___" inline<"___">+ "___"
-
-	bold
-		= "**" ~"*" inline<"**">+ "**" ~"*"
-		| "__" ~"_" inline<"__">+ "__" ~"_"
-
-	italic
-		= "*" ~"*" inline<"*">+ "*" ~"*"
-		| "_" ~"_" inline<"_">+ "_" ~"_"
-	
-	link = "[" inline<"]">+ "]" "(" inlineRaw<")">+ ")" 
-
-	// Code and math are non-folding
-	code = "\`" ~"\`" inlineRaw<"\`">+ "\`" ~"\`"
-
-	inlineMath = "$" ~"$" inlineRaw<"$">+ "$" ~"$"
-	inlineDisplayMath = "$$" inlineRaw<"$$">+ "$$"
-
-	escape = "\\" ("@" | "*" | "_" | "$" | "\`" | "\\")
-
-	inline<stop>
-		= boldItalic
-		| bold
-		| italic
-		| code
-		| inlineMath
-		| inlineDisplayMath
-		| link
-		| escape
-		| (~stop ~newline any)
-		
-	escapeRaw<stop> = "\\" ("\\" | stop)
-
-	inlineRaw<stop>
-		= escapeRaw<stop>
-		| (~stop ~newline any)
-		
-	blockInteriorRaw<stop>
-		= escapeRaw<stop>
-		| (~(newline spaceOrTab* stop) any)
-
-	newline = "\r\n" | "\n" | "\r"
-	doubleNewline = newline newline
-	twoOrMoreNewlines = doubleNewline newline*
-	
-	spaceOrTab = " " | "\t"
+  newline = "\r\n" | "\n" | "\r"
+  doubleNewline = newline spaceOrTab* newline
+  twoOrMoreNewlines = doubleNewline (spaceOrTab* newline)*
+  
+  spaceOrTab = " " | "\t"
 }
 `;
 
