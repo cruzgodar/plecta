@@ -19,7 +19,8 @@ plecta {
   
   
   
-  heading = spaceOrTab* "#" "#"? "#"? "#"? "#"? "#"? spaceOrTab+ inline<(newline | end)>+
+  heading = spaceOrTab* headingHashes spaceOrTab+ inline<(newline | end)>+
+  headingHashes = "#" "#"? "#"? "#"? "#"? "#"?
   
   
   
@@ -54,10 +55,10 @@ plecta {
   
   
   
-  unorderedList = unorderedItem (newline unorderedItem)* &(newline | end)
+  unorderedList = unorderedItem (space* unorderedItem)* &(newline | end)
   unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<(newline | end)>+
 
-  orderedList = orderedItem (newline orderedItem)* &(newline | end)
+  orderedList = orderedItem (space* orderedItem)* &(newline | end)
   orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<(newline | end)>+
   orderedItemStarter
   	= (digit+ ".") --numeric
@@ -114,7 +115,7 @@ plecta {
   	= spaceOrTab              --single
     | &allowedInsides newline --double
 
-  escape = "\\" ("*" | "_" | "$" | "${bt}" | "<" | ">" | "\\")
+  escape = "\\" any
 
   inline<stop>
     = boldItalic
@@ -128,12 +129,9 @@ plecta {
     | functionCall
     | escape
     | (~stop ~newline any)
-    
-  escapeRaw<stop> = "\\" ("\\" | stop)
 
   inlineRaw<stop>
     = functionCall
-  	| escapeRaw<stop>
     | (~stop ~newline any)
 
   newline = "\r\n" | "\n" | "\r"
@@ -144,19 +142,175 @@ plecta {
   
   
   functionCall
-    = "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
+  	= "\\@"                                           --escaped
+    | "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
     | "@" jsIdentifier (parsedBlock | rawBlock)*      --bare
-    | "\\@"                                           --escaped
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
   jsIdentifierPart = jsIdentifierStart | digit
   
   parsedBlock = "[" inline<"]">+ "]"
-  rawBlock = "{" (escapeRaw<"}"> | (~"}" ~newline any))+ "}"
+  rawBlock = "{" (rawBlockEscaped | rawBlockCharacter)+ "}"
+  
+  rawBlockCharacter = ~"}" ~newline any
+  rawBlockEscaped = "\\)"
 }
 `;
 
 const plecta = ohm.grammar(grammar);
 
-console.log(plecta.match("a *b*").succeeded());
+const semantics = plecta.createSemantics();
+
+semantics.addOperation("eval", {
+	heading(_1, hashes, _2, body)
+	{
+		// TODO
+		return hashes.sourceString.length + body.eval();
+	},
+
+	codeBlock(_1, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	displayMath(_1, _2, _3, _4, body, _5, _6, _7, _8)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	unorderedList(firstItem, spaces, restItems, _2)
+	{
+		// TODO
+		return [
+			firstItem.eval(),
+			...spaces.flatMap((space, i) => [space.eval(), restItems[i].eval()])
+		].join("\n");
+	},
+
+	unorderedItem(_1, _2, _3, body)
+	{
+		// TODO
+		return body.eval()
+	},
+
+	orderedList(firstItem, spaces, restItems, _2)
+	{
+		// TODO
+		return [
+			firstItem.eval(),
+			...spaces.flatMap((space, i) => [space.eval(), restItems[i].eval()])
+		].join("\n");
+	},
+
+	orderedItem(_1, _2, _3, body)
+	{
+		// TODO
+		return body.eval()
+	},
+
+	htmlTag_openClose(openTag, body, closeTag)
+	{
+		// TODO
+		return openTag.eval() + body.eval() + closeTag.eval();
+	},
+
+	htmlTag_void(voidTag)
+	{
+		// TODO
+		return voidTag.eval();
+	},
+
+
+
+	boldItalic(_1, body, _2)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	bold(_1, body, _2)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	italic(_1, body, _2)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	link(_1, displayText, _2, _3, url, _4)
+	{
+		// TODO
+		return displayText.eval();
+	},
+
+	code(_1, body, _2)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	inlineMath(_1, body, _2)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	inlineDisplayMath(_1, body, _2)
+	{
+		// TODO
+		return body.eval();
+	},
+
+	escape(backslash, escapedCharacter)
+	{
+		return escapedCharacter.eval();
+	},
+
+
+
+	functionCall_wrapped(_1, name, blocks, _2)
+	{
+		// TODO
+		return "[OUTPUT]"
+	},
+
+	functionCall_bare(_1, name, blocks)
+	{
+		// TODO
+		return "[OUTPUT]"
+	},
+
+	functionCall_escaped(_1)
+	{
+		return "@";
+	},
+
+
+
+	_terminal()
+	{
+		return this.sourceString;
+	},
+
+	_iter(...children)
+	{
+		return children.map(c => c.eval()).join("");
+	},
+});
+
+console.log(
+	semantics(plecta.match(`
+	### test`)).eval()
+);
