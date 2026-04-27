@@ -13,32 +13,26 @@ plecta {
     | declarationBlock
     | unorderedList
     | orderedList
-    | htmlTag<any>
     | newline          // Needs to be above paragraph or else newlines will always lead to paragraphs
     | paragraph
   
   
   
-  heading = spaceOrTab* headingHashes spaceOrTab+ inline<(newline | end)>+
-  headingHashes = "#" "#"? "#"? "#"? "#"? "#"?
+  heading = spaceOrTab* "#" "#"? "#"? "#"? "#"? "#"? spaceOrTab+ inline<~(newline | end) any>+
   
   
   
   codeBlock
     = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
-      codeBlockBody
+      raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>*
    	  newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
-	
-  codeBlockBody = (functionCall | ~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any)*
   
   
   
   displayMath
     = spaceOrTab* "$$" spaceOrTab* newline
-      displayMathBody
+      raw<~(newline spaceOrTab* "$$" (newline | end)) any>*
    	  newline spaceOrTab* "$$" &(newline | end)
-	
-  displayMathBody = (functionCall | ~(newline spaceOrTab* "$$" (newline | end)) any)*
   
   
   
@@ -46,7 +40,7 @@ plecta {
     = spaceOrTab* "@@@" spaceOrTab* alnum* spaceOrTab* newline
     declarationBlockBody
     declarationBlockTerminator
-
+  
   declarationBlockBody = (~(newline spaceOrTab* "@@@") any)*
 
   declarationBlockTerminator
@@ -55,69 +49,42 @@ plecta {
   
   
   
-  unorderedList = unorderedItem (space* unorderedItem)* &(newline | end)
-  unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<(newline | end)>+
+  unorderedList = unorderedItem (newline unorderedItem)* &(newline | end)
+  unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<~(newline | end) any>+
 
-  orderedList = orderedItem (space* orderedItem)* &(newline | end)
-  orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<(newline | end)>+
+  orderedList = orderedItem (newline orderedItem)* &(newline | end)
+  orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<~(newline | end) any>+
   orderedItemStarter
   	= (digit+ ".") --numeric
     | "+" 		   --plus
   
   
   
-  paragraph = (inline<(doubleNewline | end)> | newline ~newline)+
+  paragraph = inline<~(doubleNewline | end) any>+
 
   boldItalic
-    = "***" inline<"***">+ "***"
-    | "___" inline<"___">+ "___"
+    = "***" inline<~"***" any>+ "***"
+    | "___" inline<~"___" any>+ "___"
 
   bold
-    = "**" ~"*" inline<"**">+ "**" ~"*"
-    | "__" ~"_" inline<"__">+ "__" ~"_"
+    = "**" ~"*" inline<~"**" any>+ "**" ~"*"
+    | "__" ~"_" inline<~"__" any>+ "__" ~"_"
 
   italic
-    = "*" ~"*" inline<"*">+ "*" ~"*"
-    | "_" ~"_" inline<"_">+ "_" ~"_"
+    = "*" ~"*" inline<~"*" any>+ "*" ~"*"
+    | "_" ~"_" inline<~"_" any>+ "_" ~"_"
   
-  link = "[" inline<"]">+ "]" "(" inlineRaw<")">+ ")" 
+  link = "[" inline<~"]" any>+ "]" "(" raw<~")" ~doubleNewline any>+ ")" 
 
   // Code and math are non-folding
-  code = "${bt}" ~"${bt}" inlineRaw<"${bt}">+ "${bt}" ~"${bt}"
+  code = "${bt}" ~"${bt}" raw<~"${bt}" ~doubleNewline any>+ "${bt}" ~"${bt}"
 
-  inlineMath = "$" ~"$" inlineRaw<"$">+ "$" ~"$"
-  inlineDisplayMath = "$$" inlineRaw<"$$">+ "$$"
-  
-  // allowedInsides is either any for block-level tags or ~newline any for inline ones
-  htmlTag<allowedInsides>
-  	= htmlOpenTag<allowedInsides> htmlTagBody<allowedInsides>* htmlCloseTag --openClose
-    | htmlVoidTag<allowedInsides> --void
-	
-  htmlOpenTag<allowedInsides> = "<" htmlTagName htmlAttribute<allowedInsides>* htmlTagWs<allowedInsides>* ">"
-  htmlCloseTag = "</" htmlTagName ">"
-  htmlVoidTag<allowedInsides> = "<" htmlTagName htmlAttribute<allowedInsides>* htmlTagWs<allowedInsides>* "/"? ">"
-  
-  htmlTagName = (functionCall | letter) (functionCall | letter | digit | "-")*
-  
-  htmlAttribute<allowedInsides> = htmlTagWs<allowedInsides>+ htmlTagName ("=" htmlAttributeValue<allowedInsides>)?
-  
-  htmlAttributeValue<allowedInsides>
-    = "\"" (functionCall | ~"\"" allowedInsides)* "\""  --doubleQuote
-    | "'" (functionCall | ~"'" allowedInsides)* "'"     --singleQuote
-    | (functionCall | ~spaceOrTab ~newline ~">" any)+   --bare
-    
-  htmlTagBody<allowedInsides>
-    = htmlTag<allowedInsides>
-    | functionCall
-    | (~htmlCloseTag allowedInsides)
-    
-  htmlTagWs<allowedInsides>
-  	= spaceOrTab              --single
-    | &allowedInsides newline --double
+  inlineMath = "$" ~"$" raw<~"$" ~doubleNewline any>+ "$" ~"$"
+  inlineDisplayMath = "$$" raw<~"$$" ~doubleNewline any>+ "$$"
 
   escape = "\\" any
 
-  inline<stop>
+  inline<allowed>
     = boldItalic
     | bold
     | italic
@@ -125,14 +92,15 @@ plecta {
     | inlineMath
     | inlineDisplayMath
     | link
-    | htmlTag<~newline any>
     | functionCall
     | escape
-    | (~stop ~newline any)
+    | allowed
+ 
 
-  inlineRaw<stop>
-    = functionCall
-    | (~stop ~newline any)
+  // The raw content of code blocks, display math, etc.
+  raw<allowed>
+    = functionCallRaw
+    | allowed
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
@@ -142,43 +110,45 @@ plecta {
   
   
   functionCall
-  	= "\\@"                                           --escaped
-    | "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
+    = "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
     | "@" jsIdentifier (parsedBlock | rawBlock)*      --bare
+    | "@" rawBlock                                    --rawShortcut
+    | "\\@"                                           --escaped
+    
+  functionCallRaw
+    = "@(" jsIdentifier rawBlock* ")" --wrapped
+    | "@" jsIdentifier rawBlock*      --bare
+    | "@" rawBlock                    --rawShortcut
+    | "\\@"                           --escaped
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
   jsIdentifierPart = jsIdentifierStart | digit
   
-  parsedBlock = "[" inline<"]">+ "]"
-  rawBlock = "{" (rawBlockEscaped | rawBlockCharacter)+ "}"
+  parsedBlock = "[" inline<~"]" any>+ "]"
+  rawBlock = "{" (escapeRaw<"}"> | (~"}" ~newline any))+ "}"
   
-  rawBlockCharacter = ~"}" ~newline any
-  rawBlockEscaped = "\\)"
-}
-`;
+  escapeRaw<stop> = "\\" ("\\" | stop)
+}`;
 
 const plecta = ohm.grammar(grammar);
 
 const semantics = plecta.createSemantics();
 
-semantics.addOperation("eval", {
+semantics.addOperation("desugar", {
 	heading(_1, hashes, _2, body)
 	{
-		// TODO
-		return hashes.sourceString.length + body.eval();
+		return `@heading{${hashes.length}}[${body.desugar()}]`;
 	},
 
 	codeBlock(_1, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
-		// TODO
-		return body.eval();
+		return `@codeBlock{${language}}{${body.desugar()}}`;
 	},
 
 	displayMath(_1, _2, _3, _4, body, _5, _6, _7, _8)
 	{
-		// TODO
-		return body.eval();
+		return `@displayMath{${hashes.length}}[${body.desugar()}]`;
 	},
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
