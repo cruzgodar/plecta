@@ -74,9 +74,8 @@ plecta {
     = "*" ~"*" inline<~"*" any>+ "*" ~"*"
     | "_" ~"_" inline<~"_" any>+ "_" ~"_"
   
-  link = "[" inline<~"]" any>+ "]" "(" raw<~")" ~doubleNewline any>+ ")" 
+  link = "[" inline<~"]" any>+ "]" "(" raw<~")" ~doubleNewline any>+ ")"
 
-  // Code and math are non-folding
   code = "${bt}" ~"${bt}" raw<~"${bt}" ~doubleNewline any>+ "${bt}" ~"${bt}"
 
   inlineMath = "$" ~"$" raw<~"$" ~doubleNewline any>+ "$" ~"$"
@@ -98,9 +97,7 @@ plecta {
  
 
   // The raw content of code blocks, display math, etc.
-  raw<allowed>
-    = functionCallRaw
-    | allowed
+  raw<allowed> = functionCall | allowed
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
@@ -112,23 +109,17 @@ plecta {
   functionCall
     = "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
     | "@" jsIdentifier (parsedBlock | rawBlock)*      --bare
-    | "@" rawBlock                                    --rawShortcut
+    | "@" rawBlock                                    --raw
     | "\\@"                                           --escaped
-    
-  functionCallRaw
-    = "@(" jsIdentifier rawBlock* ")" --wrapped
-    | "@" jsIdentifier rawBlock*      --bare
-    | "@" rawBlock                    --rawShortcut
-    | "\\@"                           --escaped
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
   jsIdentifierPart = jsIdentifierStart | digit
   
   parsedBlock = "[" inline<~"]" any>+ "]"
-  rawBlock = "{" (escapeRaw<"}"> | (~"}" ~newline any))+ "}"
+  rawBlock = "{" (rawBlockEscape | raw<~"}" any>)+ "}"
   
-  escapeRaw<stop> = "\\" ("\\" | stop)
+  rawBlockEscape = "\\" ("\\" | "}")
 }`;
 
 const plecta = ohm.grammar(grammar);
@@ -185,18 +176,6 @@ semantics.addOperation("desugar", {
 	{
 		// TODO
 		return body.eval()
-	},
-
-	htmlTag_openClose(openTag, body, closeTag)
-	{
-		// TODO
-		return openTag.eval() + body.eval() + closeTag.eval();
-	},
-
-	htmlTag_void(voidTag)
-	{
-		// TODO
-		return voidTag.eval();
 	},
 
 
@@ -260,6 +239,12 @@ semantics.addOperation("desugar", {
 	{
 		// TODO
 		return "[OUTPUT]"
+	},
+
+	functionCall_raw(_1, block)
+	{
+		// TODO
+		return block.eval();
 	},
 
 	functionCall_escaped(_1)
