@@ -216,7 +216,49 @@ semantics.addOperation("desugar", {
 
 	escape(backslash, escapedCharacter)
 	{
-		return escapedCharacter.desugar();
+		return this.sourceString;
+	},
+
+
+
+	functionCall_wrapped(_1, name, blocks, _2)
+	{
+		return `@(${name.desugar()}${blocks.desugar()})`;
+	},
+
+	functionCall_bare(_1, name, blocks)
+	{
+		return `@${name.desugar()}${blocks.desugar()}`;
+	},
+
+	functionCall_raw(_1, block)
+	{
+		return this.sourceString;
+	},
+
+	functionCall_escaped(_1)
+	{
+		return this.sourceString;
+	},
+
+	jsIdentifier(_1, _2)
+	{
+		return this.sourceString;
+	},
+
+	parsedBlock(_1, body, _2)
+	{
+		return `[${body.desugar()}]`;
+	},
+
+	rawBlock(_1, body, _2)
+	{
+		return `{${body.desugar()}}`;
+	},
+
+	rawBlockEscape(_1, _2)
+	{
+		return this.sourceString;
 	},
 
 
@@ -239,42 +281,45 @@ semantics.addOperation("desugar", {
 	},
 });
 
-console.log(grammar);
-
 console.log(
 	semantics(plecta.match(String.raw`
-# Heading
-## subheading
+	# Heading
+	## subheading
 
-\`\`\`js
-code}
-\`\`\`
-$$
-math
-$$
+	${bt}${bt}${bt}js
+		f(x)
+		{
+			const y = "\n";
+		}
+	${bt}${bt}${bt}
+	$$
+		\{ 1, 2 \}
+	$$
 
-@@@html
-declaration1
-@@@tex
-declaration2
-@@@
+	@@@html
+		declaration1
+	@@@tex
+		declaration2
+	@@@
 
-- 1
-- 2
-- 3
+	- 1
+	- 2
+	- 3
 
-1. ordered
-+  list
+	1. ordered
+	+  list
 
-<a
-	href="a"
->
-	raw html
-</a>
+	<a href="b">
+		raw html
+	</a>
 
-Paragraph with *italic*, **bold**, ***bolditalic***,
-\`code\`, $math$, $$displaystyle math$$, [link](somewhere),
-<span style="">html</span>, and escaped characters: \@x \*c\*
-\$ \` \<g>
+	Paragraph with *italic*, **bold**, ***bolditalic***,
+	${bt}code${bt}, $math$, $$displaystyle math$$, [link](somewhere),
+	<span style="something">html</span>, and escaped characters: \@x \*c\*
+	\$ \${bt}. Also a @f[function call]{with a raw input \} }[and escaped characters \]]
+
+	@{
+		A manual raw block
+	}
 	`)).desugar()
 );
