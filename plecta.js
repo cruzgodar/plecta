@@ -112,15 +112,17 @@ plecta {
   
   
   functionCall
-    = "@(" jsIdentifier (parsedBlock | rawBlock)* ")" --wrapped
-    | "@" jsIdentifier (parsedBlock | rawBlock)*      --bare
-    | "@" rawBlock                                    --raw
-    | "\\@"                                           --escaped
+    = "@" space* "(" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
+    | "@" space* jsIdentifier spacePaddedBlock*                       --bare
+    | "@" space* rawBlock                                             --raw
+    | "\\@"                                                           --escaped
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
   jsIdentifierPart = jsIdentifierStart | digit
   
+  spacePaddedBlock = space* parsedOrRawBlock
+  parsedOrRawBlock = parsedBlock | rawBlock
   parsedBlock = "[" inline<~"]" any>+ "]"
   rawBlock = "{" (rawBlockEscape | raw<~"}" any>)+ "}"
   
@@ -132,6 +134,8 @@ const plecta = ohm.grammar(grammar);
 
 const semantics = plecta.createSemantics();
 
+// Convert all syntactic sugar to function calls, escaping characters as necessary.
+// No characters are unescaped.
 semantics.addOperation("desugar", {
 	heading(leadingSpace, hashes, _2, body)
 	{
@@ -221,19 +225,19 @@ semantics.addOperation("desugar", {
 
 
 
-	functionCall_wrapped(_1, name, blocks, _2)
+	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
-		return `@(${name.desugar()}${blocks.desugar()})`;
+		return `@(${name.desugar()}${spacePaddedBlocks.desugar()})`;
 	},
 
-	functionCall_bare(_1, name, blocks)
+	functionCall_bare(_1, _2, name, spacePaddedBlocks)
 	{
-		return `@${name.desugar()}${blocks.desugar()}`;
+		return `@${name.desugar()}${spacePaddedBlocks.desugar()}`;
 	},
 
-	functionCall_raw(_1, block)
+	functionCall_raw(_1, _2, block)
 	{
-		return this.sourceString;
+		return `@${block.desugar()}`;
 	},
 
 	functionCall_escaped(_1)
@@ -244,6 +248,11 @@ semantics.addOperation("desugar", {
 	jsIdentifier(_1, _2)
 	{
 		return this.sourceString;
+	},
+
+	spacePaddedBlock(_1, block)
+	{
+		return block.desugar();
 	},
 
 	parsedBlock(_1, body, _2)
@@ -281,8 +290,7 @@ semantics.addOperation("desugar", {
 	},
 });
 
-console.log(
-	semantics(plecta.match(String.raw`
+const parsed = semantics(plecta.match(String.raw`
 	# Heading
 	## subheading
 
@@ -321,5 +329,6 @@ console.log(
 	@{
 		A manual raw block
 	}
-	`)).desugar()
-);
+	`));
+
+console.log(parsed.desugar());
