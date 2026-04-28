@@ -24,14 +24,14 @@ plecta {
   
   codeBlock
     = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
-      raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>*
+      (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>)*
    	  newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
   
   
   
   displayMath
     = spaceOrTab* "$$" spaceOrTab* newline
-      raw<~(newline spaceOrTab* "$$" (newline | end)) any>*
+      (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any>)*
    	  newline spaceOrTab* "$$" &(newline | end)
   
   
@@ -74,12 +74,15 @@ plecta {
     = "*" ~"*" inline<~"*" any>+ "*" ~"*"
     | "_" ~"_" inline<~"_" any>+ "_" ~"_"
   
-  link = "[" inline<~"]" any>+ "]" "(" raw<~")" ~doubleNewline any>+ ")"
+  link
+  	= "[" inline<~"]" any>+ "]"
+  	"(" (rawBlockEscapable | raw<~")" ~doubleNewline any>)+ ")" 
 
-  code = "${bt}" ~"${bt}" raw<~"${bt}" ~doubleNewline any>+ "${bt}" ~"${bt}"
+  // Code and math are non-folding
+  code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any>)+ "${bt}" ~"${bt}"
 
-  inlineMath = "$" ~"$" raw<~"$" ~doubleNewline any>+ "$" ~"$"
-  inlineDisplayMath = "$$" raw<~"$$" ~doubleNewline any>+ "$$"
+  inlineMath = "$" ~"$" (rawBlockEscapable | raw<~"$" ~doubleNewline any>)+ "$" ~"$"
+  inlineDisplayMath = "$$" (rawBlockEscapable | raw<~"$$" ~doubleNewline any>)+ "$$"
 
   escape = "\\" any
 
@@ -119,7 +122,8 @@ plecta {
   parsedBlock = "[" inline<~"]" any>+ "]"
   rawBlock = "{" (rawBlockEscape | raw<~"}" any>)+ "}"
   
-  rawBlockEscape = "\\" ("\\" | "}")
+  rawBlockEscape = "\\" rawBlockEscapable
+  rawBlockEscapable = "\\" | "}"
 }`;
 
 const plecta = ohm.grammar(grammar);
