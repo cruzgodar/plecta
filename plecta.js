@@ -7,7 +7,7 @@ plecta {
   document = chunk*
   
   chunk
-  	= heading
+    = heading
     | codeBlock
     | displayMath
     | declarationBlock
@@ -18,21 +18,22 @@ plecta {
   
   
   
-  heading = spaceOrTab* "#" "#"? "#"? "#"? "#"? "#"? spaceOrTab+ inline<~(newline | end) any>+
+  heading = spaceOrTab* headingHashes spaceOrTab+ inline<~(newline | end) any>+
+  headingHashes = "#" "#"? "#"? "#"? "#"? "#"?
   
   
   
   codeBlock
     = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
       (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>)*
-   	  newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
+      newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
   
   
   
   displayMath
     = spaceOrTab* "$$" spaceOrTab* newline
       (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any>)*
-   	  newline spaceOrTab* "$$" &(newline | end)
+      newline spaceOrTab* "$$" &(newline | end)
   
   
   
@@ -49,14 +50,15 @@ plecta {
   
   
   
-  unorderedList = unorderedItem (newline unorderedItem)* &(newline | end)
+  // We include spaceOrTab* here so we can extract the leading indentation
+  unorderedList = spaceOrTab* unorderedItem (newline unorderedItem)* &(newline | end)
   unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<~(newline | end) any>+
 
-  orderedList = orderedItem (newline orderedItem)* &(newline | end)
+  orderedList = spaceOrTab* orderedItem (newline orderedItem)* &(newline | end)
   orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<~(newline | end) any>+
   orderedItemStarter
-  	= (digit+ ".") --numeric
-    | "+" 		   --plus
+    = (digit+ ".") --numeric
+    | "+"      --plus
   
   
   
@@ -75,8 +77,8 @@ plecta {
     | "_" ~"_" inline<~"_" any>+ "_" ~"_"
   
   link
-  	= "[" inline<~"]" any>+ "]"
-  	"(" (rawBlockEscapable | raw<~")" ~doubleNewline any>)+ ")" 
+    = "[" inline<~"]" any>+ "]"
+    "(" (rawBlockEscapable | raw<~")" ~doubleNewline any>)+ ")" 
 
   // Code and math are non-folding
   code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any>)+ "${bt}" ~"${bt}"
@@ -131,129 +133,97 @@ const plecta = ohm.grammar(grammar);
 const semantics = plecta.createSemantics();
 
 semantics.addOperation("desugar", {
-	heading(_1, hashes, _2, body)
+	heading(leadingSpace, hashes, _2, body)
 	{
-		return `@heading{${hashes.length}}[${body.desugar()}]`;
+		return `${leadingSpace.desugar()}@heading{${hashes.sourceString.length}}[${body.desugar()}]`;
 	},
 
-	codeBlock(_1, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
+	codeBlock(leadingSpace, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
-		return `@codeBlock{${language}}{${body.desugar()}}`;
+		return `${leadingSpace.desugar()}@codeBlock{${language.desugar()}}{${body.desugar()}}`;
 	},
 
-	displayMath(_1, _2, _3, _4, body, _5, _6, _7, _8)
+	displayMath(leadingSpace, _2, _3, _4, body, _5, _6, _7, _8)
 	{
-		return `@displayMath{${hashes.length}}[${body.desugar()}]`;
+		return `${leadingSpace.desugar()}@displayMath{${body.desugar()}}`;
 	},
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
-		// TODO
-		return body.eval();
+		return this.sourceString;
 	},
 
-	unorderedList(firstItem, spaces, restItems, _2)
+	unorderedList(leadingSpace, firstItem, _1, restItems, _2)
 	{
-		// TODO
-		return [
-			firstItem.eval(),
-			...spaces.flatMap((space, i) => [space.eval(), restItems[i].eval()])
-		].join("\n");
+		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
+
+		return `${leadingSpace.desugar()}@unorderedList[${firstItem.desugar()}]${restItemsWrapped}`;
 	},
 
 	unorderedItem(_1, _2, _3, body)
 	{
-		// TODO
-		return body.eval()
+		return body.desugar();
 	},
 
-	orderedList(firstItem, spaces, restItems, _2)
+	orderedList(leadingSpace, firstItem, _1, restItems, _2)
 	{
-		// TODO
-		return [
-			firstItem.eval(),
-			...spaces.flatMap((space, i) => [space.eval(), restItems[i].eval()])
-		].join("\n");
+		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
+
+		return `${leadingSpace.desugar()}@orderedList[${firstItem.desugar()}]${restItemsWrapped}`;
 	},
 
 	orderedItem(_1, _2, _3, body)
 	{
-		// TODO
-		return body.eval()
+		return body.desugar();
 	},
 
 
 
 	boldItalic(_1, body, _2)
 	{
-		// TODO
-		return body.eval();
+		return `@boldItalic[${body.desugar()}]`;
 	},
 
 	bold(_1, body, _2)
 	{
-		// TODO
-		return body.eval();
+		return `@bold[${body.desugar()}]`;
 	},
 
 	italic(_1, body, _2)
 	{
-		// TODO
-		return body.eval();
+		return `@italic[${body.desugar()}]`;
 	},
 
 	link(_1, displayText, _2, _3, url, _4)
 	{
-		// TODO
-		return displayText.eval();
+		return `@link[${displayText.desugar()}]{${url.desugar()}}`;
 	},
 
 	code(_1, body, _2)
 	{
-		// TODO
-		return body.eval();
+		return `@code{${body.desugar()}}`;
 	},
 
 	inlineMath(_1, body, _2)
 	{
-		// TODO
-		return body.eval();
+		return `@inlineMath{${body.desugar()}}`;
 	},
 
 	inlineDisplayMath(_1, body, _2)
 	{
-		// TODO
-		return body.eval();
+		return `@inlineDisplayMath{${body.desugar()}}`;
 	},
 
 	escape(backslash, escapedCharacter)
 	{
-		return escapedCharacter.eval();
+		return escapedCharacter.desugar();
 	},
 
 
 
-	functionCall_wrapped(_1, name, blocks, _2)
+	rawBlockEscapable(character)
 	{
-		// TODO
-		return "[OUTPUT]"
-	},
-
-	functionCall_bare(_1, name, blocks)
-	{
-		// TODO
-		return "[OUTPUT]"
-	},
-
-	functionCall_raw(_1, block)
-	{
-		// TODO
-		return block.eval();
-	},
-
-	functionCall_escaped(_1)
-	{
-		return "@";
+		return "\\" + character.desugar();
 	},
 
 
@@ -265,11 +235,46 @@ semantics.addOperation("desugar", {
 
 	_iter(...children)
 	{
-		return children.map(c => c.eval()).join("");
+		return children.map(c => c.desugar()).join("");
 	},
 });
 
+console.log(grammar);
+
 console.log(
-	semantics(plecta.match(`
-	### test`)).eval()
+	semantics(plecta.match(String.raw`
+# Heading
+## subheading
+
+\`\`\`js
+code}
+\`\`\`
+$$
+math
+$$
+
+@@@html
+declaration1
+@@@tex
+declaration2
+@@@
+
+- 1
+- 2
+- 3
+
+1. ordered
++  list
+
+<a
+	href="a"
+>
+	raw html
+</a>
+
+Paragraph with *italic*, **bold**, ***bolditalic***,
+\`code\`, $math$, $$displaystyle math$$, [link](somewhere),
+<span style="">html</span>, and escaped characters: \@x \*c\*
+\$ \` \<g>
+	`)).desugar()
 );
