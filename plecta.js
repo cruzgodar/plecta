@@ -25,14 +25,14 @@ plecta {
   
   codeBlock
     = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
-      (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>)*
+      (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any, "${bt}${bt}${bt}">)*
       newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
   
   
   
   displayMath
     = spaceOrTab* "$$" spaceOrTab* newline
-      (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any>)*
+      (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any, "$$">)*
       newline spaceOrTab* "$$" &(newline | end)
   
   
@@ -78,13 +78,13 @@ plecta {
   
   link
     = "[" inline<~"]" any>+ "]"
-    "(" (rawBlockEscapable | raw<~")" ~doubleNewline any>)+ ")" 
+    "(" (rawBlockEscapable | raw<~")" ~doubleNewline any, ")">)+ ")"
 
   // Code and math are non-folding
-  code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any>)+ "${bt}" ~"${bt}"
+  code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any, "${bt}">)+ "${bt}" ~"${bt}"
 
-  inlineMath = "$" ~"$" (rawBlockEscapable | raw<~"$" ~doubleNewline any>)+ "$" ~"$"
-  inlineDisplayMath = "$$" (rawBlockEscapable | raw<~"$$" ~doubleNewline any>)+ "$$"
+  inlineMath = "$" ~"$" (rawBlockEscapable | raw<~"$" ~doubleNewline any, "$">)+ "$" ~"$"
+  inlineDisplayMath = "$$" (rawBlockEscapable | raw<~"$$" ~doubleNewline any, "$$">)+ "$$"
 
   escape = "\\" any
 
@@ -102,7 +102,9 @@ plecta {
  
 
   // The raw content of code blocks, display math, etc.
-  raw<allowed> = functionCall | allowed
+  raw<allowed, escapable> = rawEscape<escapable> | functionCall | allowed
+  
+  rawEscape<escapable> = "\\" escapable
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
@@ -124,10 +126,10 @@ plecta {
   spacePaddedBlock = space* parsedOrRawBlock
   parsedOrRawBlock = parsedBlock | rawBlock
   parsedBlock = "[" inline<~"]" any>+ "]"
-  rawBlock = "{" (rawBlockEscape | raw<~"}" any>)+ "}"
+  rawBlock = "{" (rawBlockEscape | functionCall | (~"}" any))+ "}"
   
   rawBlockEscape = "\\" rawBlockEscapable
-  rawBlockEscapable = "\\" | "}"
+  rawBlockEscapable = "}"
 }`;
 
 const plecta = ohm.grammar(grammar);
@@ -135,7 +137,8 @@ const plecta = ohm.grammar(grammar);
 const semantics = plecta.createSemantics();
 
 // Convert all syntactic sugar to function calls, escaping characters as necessary.
-// No characters are unescaped.
+// The only characters that are unescaped are those in raw environments that would
+// no longer considered valid escape sequences when desugaring.
 semantics.addOperation("desugar", {
 	heading(leadingSpace, hashes, _2, body)
 	{
@@ -223,6 +226,11 @@ semantics.addOperation("desugar", {
 		return this.sourceString;
 	},
 
+	rawEscape(_1, escapedCharacter)
+	{
+		return escapedCharacter.desugar();
+	},
+
 
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
@@ -301,7 +309,7 @@ const parsed = semantics(plecta.match(String.raw`
 		}
 	${bt}${bt}${bt}
 	$$
-		\{ 1, 2 \}
+		\{ 1, 2 \} \$$
 	$$
 
 	@@@html
