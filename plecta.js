@@ -1,5 +1,7 @@
 const ohm = require("ohm-js");
 
+const outputFormat = "html";
+
 const bt = "`";
 
 const grammar = String.raw`
@@ -131,6 +133,8 @@ plecta {
   rawBlockEscape = "\\" rawBlockEscapable
   rawBlockEscapable = "}"
 }`;
+
+
 
 const plecta = ohm.grammar(grammar);
 
@@ -292,13 +296,122 @@ semantics.addOperation("desugar", {
 		return this.sourceString;
 	},
 
+	_nonterminal(...children)
+	{
+		return children.map(c => c.desugar()).join("");
+	},
+
 	_iter(...children)
 	{
 		return children.map(c => c.desugar()).join("");
 	},
 });
 
-const parsed = semantics(plecta.match(String.raw`
+
+
+// Produces the code to be run. We do *not* want this to be nested, so they
+// get written in order to this string.
+let codeToExecute = "";
+
+semantics.addOperation("getCode", {
+	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
+	{
+		if (!scope.sourceString || scope.sourceString === outputFormat)
+		{
+			codeToExecute += "\n" + body.sourceString + "\n\n";
+		}
+
+		return "";
+	},
+
+	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
+	{
+		const id = JSON.stringify(this.source.startIdx);
+
+		const arguments = spacePaddedBlocks.children
+			.map(block => JSON.stringify(block.getCode()))
+			.join(",");
+
+		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${arguments});\n`;
+
+		return "";
+	},
+
+	functionCall_bare(_1, _2, name, spacePaddedBlocks)
+	{
+		const id = JSON.stringify(this.source.startIdx);
+
+		const arguments = spacePaddedBlocks.children
+			.map(block => JSON.stringify(block.getCode()))
+			.join(",");
+
+		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${arguments});\n`;
+
+		return "";
+	},
+
+	functionCall_raw(_1, _2, block)
+	{
+		return block.getCode();
+	},
+
+	functionCall_escaped(_1)
+	{
+		return "@";
+	},
+
+	jsIdentifier(_1, _2)
+	{
+		return this.sourceString;
+	},
+
+	spacePaddedBlock(_1, block)
+	{
+		return block.getCode();
+	},
+
+	parsedBlock(_1, body, _2)
+	{
+		return body.getCode();
+	},
+
+	rawBlock(_1, body, _2)
+	{
+		return body.getCode();
+	},
+
+	// JS needs the unescaped versions of these characters
+	rawBlockEscape(_1, escapedCharacter)
+	{
+		return escapedCharacter.sourceString;
+	},
+
+	escape(backslash, escapedCharacter)
+	{
+		return escapedCharacter.sourceString;
+	},
+
+
+
+	_terminal()
+	{
+		return this.sourceString;
+	},
+
+	_nonterminal(...children)
+	{
+		return children.map(c => c.getCode()).join("");
+	},
+
+	_iter(...children)
+	{
+		return children.map(c => c.getCode()).join("");
+	},
+});
+
+
+
+const input = String.raw`
 	# Heading
 	## subheading
 
@@ -330,13 +443,19 @@ const parsed = semantics(plecta.match(String.raw`
 	</a>
 
 	Paragraph with *italic*, **bold**, ***bolditalic***,
-	${bt}code${bt}, $math$, $$displaystyle math$$, [link](somewhere),
+	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
 	<span style="something">html</span>, and escaped characters: \@x \*c\*
-	\$ \${bt}. Also a @f[function call]{with a raw input \} }[and escaped characters \]]
+	\$ \${bt}. Also a @f [function call]{with a raw input \} } [
+		and escaped characters \]
+	] [and a separated line @g[with a function]]
 
 	@{
 		A manual raw block
 	}
-	`));
+`;
 
-console.log(parsed.desugar());
+const desugared = semantics(plecta.match(input)).desugar();
+
+const extracted = semantics(plecta.match(desugared)).getCode();
+
+console.log(codeToExecute);
