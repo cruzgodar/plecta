@@ -499,9 +499,12 @@ function getCode(matchResult)
 	};
 }
 
-for (const [key, value] of Object.entries(stdlib))
+if (Object.hasOwn(stdlib, outputFormat))
 {
-	globalThis[key] = value;
+	for (const [key, value] of Object.entries(stdlib[outputFormat]))
+	{
+		globalThis[key] = value;
+	}
 }
 
 const RED_BOLD = "\x1b[1;31m";
@@ -628,6 +631,7 @@ async function main(input)
 	const desugared = desugar(plecta.match(input));
 	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(plecta.match(desugared));
 	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges);
+	console.log(__plectaOutput);
 }
 
 main(String.raw`
@@ -645,9 +649,17 @@ main(String.raw`
 	$$
 
 	@@@html
-		declaration1
+		function f()
+		{
+			return "output";
+		}
+
+		function g()
+		{
+			return "output";
+		}
 	@@@tex
-		declaration2
+		// declaration
 	@@@
 
 	- 1
