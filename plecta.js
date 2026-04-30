@@ -1,4 +1,10 @@
-const ohm = require("ohm-js");
+import { randomUUID } from "crypto";
+import { unlink, writeFile } from "fs/promises";
+import * as ohm from "ohm-js";
+import { join } from "path";
+import process from "process";
+import { pathToFileURL } from "url";
+import { stdlib } from "./stdlib.js";
 
 const outputFormat = "html";
 
@@ -328,11 +334,11 @@ semantics.addOperation("getCode", {
 	{
 		const id = JSON.stringify(this.source.startIdx);
 
-		const arguments = spacePaddedBlocks.children
+		const functionArguments = spacePaddedBlocks.children
 			.map(block => JSON.stringify(block.getCode()))
 			.join(",");
 
-		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${arguments});\n`;
+		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${functionArguments});\n`;
 
 		return "";
 	},
@@ -341,11 +347,11 @@ semantics.addOperation("getCode", {
 	{
 		const id = JSON.stringify(this.source.startIdx);
 
-		const arguments = spacePaddedBlocks.children
+		const functionArguments = spacePaddedBlocks.children
 			.map(block => JSON.stringify(block.getCode()))
 			.join(",");
 
-		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${arguments});\n`;
+		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${functionArguments});\n`;
 
 		return "";
 	},
@@ -411,6 +417,43 @@ semantics.addOperation("getCode", {
 
 
 
+for (const [key, value] of Object.entries(stdlib))
+{
+	globalThis[key] = value;
+}
+
+async function runCode(code, baseDir = process.cwd())
+{
+	const body = `export const __plectaOutput = {};
+${code}`;
+	
+	const url = URL.createObjectURL(new Blob([body], { type: "text/javascript" }));
+
+	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
+
+	console.log(path, body);
+
+	await writeFile(path, body);
+
+	try
+	{
+		const module = await import(pathToFileURL(path).href);
+		return module.__plectaOutput;
+	}
+
+	catch(ex)
+	{
+		throw new Error(`${ex}`);
+	}
+
+	finally
+	{
+		await unlink(path).catch(() => {});
+	}
+}
+
+
+
 const input = String.raw`
 	# Heading
 	## subheading
@@ -455,7 +498,6 @@ const input = String.raw`
 `;
 
 const desugared = semantics(plecta.match(input)).desugar();
-
 const extracted = semantics(plecta.match(desugared)).getCode();
-
-console.log(codeToExecute);
+const __plectaOutput = runCode(codeToExecute);
+console.log(__plectaOutput);
