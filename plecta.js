@@ -149,22 +149,37 @@ const plecta = ohm.grammar(grammar);
 
 const semantics = plecta.createSemantics();
 
+// Each handler that emits a function call into the desugared output captures
+// its location in the *original* source. The id is a sequential counter shared
+// with getCode — both walk their parse trees in source order, so the nth
+// emitted function call here matches the nth function call getCode encounters.
+let nextFunctionCallId = 0;
+let functionCallLocations = {};
+
+function captureFunctionCall(node)
+{
+	functionCallLocations[nextFunctionCallId++] = node.source.getLineAndColumn();
+}
+
 // Convert all syntactic sugar to function calls, escaping characters as necessary.
 // The only characters that are unescaped are those in raw environments that would
 // no longer considered valid escape sequences when desugaring.
 semantics.addOperation("desugar", {
 	heading(leadingSpace, hashes, _2, body)
 	{
+		captureFunctionCall(this);
 		return `${leadingSpace.desugar()}@heading{${hashes.sourceString.length}}[${body.desugar()}]`;
 	},
 
 	codeBlock(leadingSpace, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
+		captureFunctionCall(this);
 		return `${leadingSpace.desugar()}@codeBlock{${language.desugar()}}{${body.desugar()}}`;
 	},
 
 	displayMath(leadingSpace, _2, _3, _4, body, _5, _6, _7, _8)
 	{
+		captureFunctionCall(this);
 		return `${leadingSpace.desugar()}@displayMath{${body.desugar()}}`;
 	},
 
@@ -175,6 +190,7 @@ semantics.addOperation("desugar", {
 
 	unorderedList(leadingSpace, firstItem, _1, restItems, _2)
 	{
+		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
 		return `${leadingSpace.desugar()}@unorderedList[${firstItem.desugar()}]${restItemsWrapped}`;
@@ -187,6 +203,7 @@ semantics.addOperation("desugar", {
 
 	orderedList(leadingSpace, firstItem, _1, restItems, _2)
 	{
+		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
 		return `${leadingSpace.desugar()}@orderedList[${firstItem.desugar()}]${restItemsWrapped}`;
@@ -201,36 +218,43 @@ semantics.addOperation("desugar", {
 
 	boldItalic(_1, body, _2)
 	{
+		captureFunctionCall(this);
 		return `@boldItalic[${body.desugar()}]`;
 	},
 
 	bold(_1, body, _2)
 	{
+		captureFunctionCall(this);
 		return `@bold[${body.desugar()}]`;
 	},
 
 	italic(_1, body, _2)
 	{
+		captureFunctionCall(this);
 		return `@italic[${body.desugar()}]`;
 	},
 
 	link(_1, displayText, _2, _3, url, _4)
 	{
+		captureFunctionCall(this);
 		return `@link[${displayText.desugar()}]{${url.desugar()}}`;
 	},
 
 	code(_1, body, _2)
 	{
+		captureFunctionCall(this);
 		return `@code{${body.desugar()}}`;
 	},
 
 	inlineMath(_1, body, _2)
 	{
+		captureFunctionCall(this);
 		return `@inlineMath{${body.desugar()}}`;
 	},
 
 	inlineDisplayMath(_1, body, _2)
 	{
+		captureFunctionCall(this);
 		return `@inlineDisplayMath{${body.desugar()}}`;
 	},
 
@@ -248,11 +272,13 @@ semantics.addOperation("desugar", {
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
+		captureFunctionCall(this);
 		return `@(${name.desugar()}${spacePaddedBlocks.desugar()})`;
 	},
 
 	functionCall_bare(_1, _2, name, spacePaddedBlocks)
 	{
+		captureFunctionCall(this);
 		return `@${name.desugar()}${spacePaddedBlocks.desugar()}`;
 	},
 
@@ -320,8 +346,12 @@ semantics.addOperation("desugar", {
 
 // Produces the code to be run. We do *not* want this to be nested, so they
 // get written in order to this accumulator, which is reset by getCode().
+// getCode walks the desugared parse tree in the same order desugar walked the
+// original, so the nth function call here corresponds to the nth captured
+// location — we use that to rekey locations by desugared startIdx.
 let codeToExecute = "";
-let functionCallLocations = {};
+let nextGetCodeId = 0;
+let locationsByStartIdx = {};
 
 semantics.addOperation("getCode", {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -339,8 +369,7 @@ semantics.addOperation("getCode", {
 		const startIdx = this.source.startIdx;
 		const id = JSON.stringify(startIdx);
 
-		functionCallLocations[startIdx] = this.source.getLineAndColumn();
-		functionCallLocations[startIdx].sourceString = this.sourceString;
+		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
 		const functionArguments = spacePaddedBlocks.children
 			.map(block => JSON.stringify(block.getCode()))
@@ -356,8 +385,7 @@ semantics.addOperation("getCode", {
 		const startIdx = this.source.startIdx;
 		const id = JSON.stringify(startIdx);
 
-		functionCallLocations[startIdx] = this.source.getLineAndColumn();
-		functionCallLocations[startIdx].sourceString = this.sourceString;
+		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
 		const functionArguments = spacePaddedBlocks.children
 			.map(block => JSON.stringify(block.getCode()))
@@ -429,12 +457,20 @@ semantics.addOperation("getCode", {
 
 
 
+function desugar(matchResult)
+{
+	nextFunctionCallId = 0;
+	functionCallLocations = {};
+	return semantics(matchResult).desugar();
+}
+
 function getCode(matchResult)
 {
 	codeToExecute = "";
-	functionCallLocations = {};
+	nextGetCodeId = 0;
+	locationsByStartIdx = {};
 	semantics(matchResult).getCode();
-	return { codeToExecute, functionCallLocations };
+	return { codeToExecute, functionCallLocations: locationsByStartIdx };
 }
 
 for (const [key, value] of Object.entries(stdlib))
@@ -442,11 +478,69 @@ for (const [key, value] of Object.entries(stdlib))
 	globalThis[key] = value;
 }
 
-async function runCode(code, baseDir = process.cwd())
+function logSourceError(ex, body, source, functionCallLocations)
+{
+	const stack = ex.stack || `${ex}`;
+	const fragmentMatch = stack.match(/\.__fragments_[^:]+\.mjs:(\d+):\d+/);
+
+	if (!fragmentMatch) return false;
+
+	const bodyLine = body.split("\n")[parseInt(fragmentMatch[1]) - 1] || "";
+	const callMatch = bodyLine.match(/__plectaOutput\[(\d+)\]\s*=\s*([A-Za-z_$][\w$]*)/);
+
+	if (!callMatch) return false;
+
+	const [, id, funcName] = callMatch;
+	const location = functionCallLocations[id];
+
+	if (!location) return false;
+
+	const sourceLines = source.split("\n");
+	const errorLine = location.lineNum;
+	const numContextLines = 4;
+	const start = Math.max(0, errorLine - numContextLines - 1);
+	const end = Math.min(sourceLines.length, errorLine + numContextLines);
+
+	const RED_BOLD = "\x1b[1;31m";
+	const RESET = "\x1b[0m";
+
+	const parts = [];
+
+	for (let i = start; i < end; i++)
+	{
+		const lineNum = String(i + 1).padStart(4);
+		const lineContent = sourceLines[i];
+
+		if (i + 1 === errorLine)
+		{
+			const funcIdx = lineContent.indexOf(funcName);
+
+			if (funcIdx >= 0)
+			{
+				const before = lineContent.slice(0, funcIdx);
+				const after = lineContent.slice(funcIdx + funcName.length);
+				parts.push(`${RED_BOLD}${lineNum}${RESET} | ${before}${RED_BOLD}${funcName}${RESET}${after}`);
+			}
+			else
+			{
+				parts.push(`${RED_BOLD}${lineNum}${RESET} | ${lineContent}`);
+			}
+		}
+		else
+		{
+			parts.push(`${lineNum} | ${lineContent}`);
+		}
+	}
+
+	console.log(parts.join("\n"));
+	return true;
+}
+
+async function runCode(code, source, functionCallLocations, baseDir = process.cwd())
 {
 	const body = `export const __plectaOutput = {};
 ${code}`;
-	
+
 	const url = URL.createObjectURL(new Blob([body], { type: "text/javascript" }));
 
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
@@ -466,6 +560,7 @@ ${code}`;
 	{
 		await unlink(path).catch(() => {});
 		pendingCleanup.delete(path);
+		logSourceError(ex, body, source, functionCallLocations);
 		throw new Error(`${ex}`);
 	}
 }
@@ -485,13 +580,13 @@ process.on("SIGINT", () => process.exit(130))
 
 async function main(input)
 {
-	const desugared = semantics(plecta.match(input)).desugar();
+	const desugared = desugar(plecta.match(input));
 	const { codeToExecute, functionCallLocations } = getCode(plecta.match(desugared));
-	console.log(functionCallLocations);
-	const __plectaOutput = await runCode(codeToExecute);
+	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations);
 }
 
 main(String.raw`
+	@f[idk]
 	# Heading
 	## subheading
 
