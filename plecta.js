@@ -319,8 +319,9 @@ semantics.addOperation("desugar", {
 
 
 // Produces the code to be run. We do *not* want this to be nested, so they
-// get written in order to this string.
+// get written in order to this accumulator, which is reset by getCode().
 let codeToExecute = "";
+let functionCallLocations = {};
 
 semantics.addOperation("getCode", {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -335,7 +336,11 @@ semantics.addOperation("getCode", {
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
-		const id = JSON.stringify(this.source.startIdx);
+		const startIdx = this.source.startIdx;
+		const id = JSON.stringify(startIdx);
+
+		functionCallLocations[startIdx] = this.source.getLineAndColumn();
+		functionCallLocations[startIdx].sourceString = this.sourceString;
 
 		const functionArguments = spacePaddedBlocks.children
 			.map(block => JSON.stringify(block.getCode()))
@@ -348,7 +353,11 @@ semantics.addOperation("getCode", {
 
 	functionCall_bare(_1, _2, name, spacePaddedBlocks)
 	{
-		const id = JSON.stringify(this.source.startIdx);
+		const startIdx = this.source.startIdx;
+		const id = JSON.stringify(startIdx);
+
+		functionCallLocations[startIdx] = this.source.getLineAndColumn();
+		functionCallLocations[startIdx].sourceString = this.sourceString;
 
 		const functionArguments = spacePaddedBlocks.children
 			.map(block => JSON.stringify(block.getCode()))
@@ -420,6 +429,14 @@ semantics.addOperation("getCode", {
 
 
 
+function getCode(matchResult)
+{
+	codeToExecute = "";
+	functionCallLocations = {};
+	semantics(matchResult).getCode();
+	return { codeToExecute, functionCallLocations };
+}
+
 for (const [key, value] of Object.entries(stdlib))
 {
 	globalThis[key] = value;
@@ -469,7 +486,8 @@ process.on("SIGINT", () => process.exit(130))
 async function main(input)
 {
 	const desugared = semantics(plecta.match(input)).desugar();
-	const extracted = semantics(plecta.match(desugared)).getCode();
+	const { codeToExecute, functionCallLocations } = getCode(plecta.match(desugared));
+	console.log(functionCallLocations);
 	const __plectaOutput = await runCode(codeToExecute);
 }
 
