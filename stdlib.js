@@ -11,18 +11,18 @@ const html = {
 
 	displayMath(body)
 	{
-		return `<p>$$${body}$$</p>`;
+		return `<p>$$\\begin{align*}${body}\\end{align*}$$</p>`;
 	},
 
 	unorderedList(...items)
 	{
-		const itemsHtml = items.map(item => `<li>${item}</li>`);
+		const itemsHtml = items.map(item => `<li>${item}</li>`).join("");
 		return `<ul>${itemsHtml}</ul>`;
 	},
 
 	orderedList(...items)
 	{
-		const itemsHtml = items.map(item => `<li>${item}</li>`);
+		const itemsHtml = items.map(item => `<li>${item}</li>`).join("");
 		return `<ol>${itemsHtml}</ol>`;
 	},
 

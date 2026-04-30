@@ -476,6 +476,69 @@ semantics.addOperation("getCode", {
 
 
 
+semantics.addOperation("insertCodeOutput(__plectaOutput)", {
+	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
+	{
+		return "";
+	},
+
+	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
+	{
+		const id = JSON.stringify(this.source.startIdx);
+		return this.args.__plectaOutput[id];
+	},
+
+	functionCall_bare(_1, _2, name, spacePaddedBlocks)
+	{
+		const id = JSON.stringify(this.source.startIdx);
+		return this.args.__plectaOutput[id];
+	},
+
+	functionCall_raw(_1, _2, block)
+	{
+		return block.insertCodeOutput(this.args.__plectaOutput);
+	},
+
+	functionCall_escaped(_1)
+	{
+		return "@";
+	},
+
+	rawBlock(_1, body, _2)
+	{
+		return body.insertCodeOutput(this.args.__plectaOutput);
+	},
+
+	rawBlockEscape(_1, escapedCharacter)
+	{
+		return escapedCharacter.sourceString;
+	},
+
+	escape(backslash, escapedCharacter)
+	{
+		return escapedCharacter.sourceString;
+	},
+
+
+
+	_terminal()
+	{
+		return this.sourceString;
+	},
+
+	_nonterminal(...children)
+	{
+		return children.map(c => c.insertCodeOutput(this.args.__plectaOutput)).join("");
+	},
+
+	_iter(...children)
+	{
+		return children.map(c => c.insertCodeOutput(this.args.__plectaOutput)).join("");
+	},
+});
+
+
+
 function desugar(matchResult)
 {
 	nextFunctionCallId = 0;
@@ -497,6 +560,11 @@ function getCode(matchResult)
 		functionCallLocations: locationsByStartIdx,
 		declarationBlockRanges,
 	};
+}
+
+function insertCodeOutput(matchResult, __plectaOutput)
+{
+	return semantics(matchResult).insertCodeOutput(__plectaOutput);
 }
 
 if (Object.hasOwn(stdlib, outputFormat))
@@ -629,12 +697,21 @@ process.on("SIGINT", () => process.exit(130))
 async function main(input)
 {
 	const desugared = desugar(plecta.match(input));
-	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(plecta.match(desugared));
+
+	const desugaredMatch = plecta.match(desugared);
+
+	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(desugaredMatch);
+
 	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges);
-	console.log(__plectaOutput);
+	
+	const replacedWithCodeOutput = insertCodeOutput(desugaredMatch, __plectaOutput);
+
+	console.log(replacedWithCodeOutput);
+
+	return replacedWithCodeOutput;
 }
 
-main(String.raw`
+const output = main(String.raw`
 	# Heading
 	## subheading
 
@@ -683,4 +760,4 @@ main(String.raw`
 	@{
 		A manual raw block
 	}
-`)
+`);
