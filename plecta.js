@@ -156,6 +156,8 @@ const semantics = plecta.createSemantics();
 let nextFunctionCallId = 0;
 let functionCallLocations = {};
 
+let declarationBlockOriginalLines = [];
+
 function captureFunctionCall(node)
 {
 	functionCallLocations[nextFunctionCallId++] = node.source.getLineAndColumn();
@@ -185,6 +187,7 @@ semantics.addOperation("desugar", {
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
+		declarationBlockOriginalLines.push(body.source.getLineAndColumn().lineNum);
 		return this.sourceString;
 	},
 
@@ -352,13 +355,29 @@ semantics.addOperation("desugar", {
 let codeToExecute = "";
 let nextGetCodeId = 0;
 let locationsByStartIdx = {};
+let nextGetCodeDeclarationId = 0;
+let declarationBlockRanges = [];
 
 semantics.addOperation("getCode", {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
+		const originalStart = declarationBlockOriginalLines[nextGetCodeDeclarationId++];
+
 		if (!scope.sourceString || scope.sourceString === outputFormat)
 		{
+			const linesBefore = codeToExecute.split("\n").length;
 			codeToExecute += "\n" + body.sourceString + "\n\n";
+
+			// +1: leading "\n" lands the body on the next line in codeToExecute.
+			// +1: runCode prepends an `export const __plectaOutput = {};` line.
+			const generatedStart = linesBefore + 2;
+			const bodyLineCount = body.sourceString.split("\n").length;
+
+			declarationBlockRanges.push({
+				generatedStart,
+				generatedEnd: generatedStart + bodyLineCount - 1,
+				originalStart,
+			});
 		}
 
 		return "";
@@ -461,6 +480,7 @@ function desugar(matchResult)
 {
 	nextFunctionCallId = 0;
 	functionCallLocations = {};
+	declarationBlockOriginalLines = [];
 	return semantics(matchResult).desugar();
 }
 
@@ -469,8 +489,14 @@ function getCode(matchResult)
 	codeToExecute = "";
 	nextGetCodeId = 0;
 	locationsByStartIdx = {};
+	nextGetCodeDeclarationId = 0;
+	declarationBlockRanges = [];
 	semantics(matchResult).getCode();
-	return { codeToExecute, functionCallLocations: locationsByStartIdx };
+	return {
+		codeToExecute,
+		functionCallLocations: locationsByStartIdx,
+		declarationBlockRanges,
+	};
 }
 
 for (const [key, value] of Object.entries(stdlib))
@@ -478,31 +504,15 @@ for (const [key, value] of Object.entries(stdlib))
 	globalThis[key] = value;
 }
 
-function logSourceError(ex, body, source, functionCallLocations)
+const RED_BOLD = "\x1b[1;31m";
+const RESET = "\x1b[0m";
+
+function renderContext(source, errorLine, highlightContent)
 {
-	const stack = ex.stack || `${ex}`;
-	const fragmentMatch = stack.match(/\.__fragments_[^:]+\.mjs:(\d+):\d+/);
-
-	if (!fragmentMatch) return false;
-
-	const bodyLine = body.split("\n")[parseInt(fragmentMatch[1]) - 1] || "";
-	const callMatch = bodyLine.match(/__plectaOutput\[(\d+)\]\s*=\s*([A-Za-z_$][\w$]*)/);
-
-	if (!callMatch) return false;
-
-	const [, id, funcName] = callMatch;
-	const location = functionCallLocations[id];
-
-	if (!location) return false;
-
 	const sourceLines = source.split("\n");
-	const errorLine = location.lineNum;
-	const numContextLines = 4;
+	const numContextLines = 3;
 	const start = Math.max(0, errorLine - numContextLines - 1);
 	const end = Math.min(sourceLines.length, errorLine + numContextLines);
-
-	const RED_BOLD = "\x1b[1;31m";
-	const RESET = "\x1b[0m";
 
 	const parts = [];
 
@@ -513,18 +523,7 @@ function logSourceError(ex, body, source, functionCallLocations)
 
 		if (i + 1 === errorLine)
 		{
-			const funcIdx = lineContent.indexOf(funcName);
-
-			if (funcIdx >= 0)
-			{
-				const before = lineContent.slice(0, funcIdx);
-				const after = lineContent.slice(funcIdx + funcName.length);
-				parts.push(`${RED_BOLD}${lineNum}${RESET} | ${before}${RED_BOLD}${funcName}${RESET}${after}`);
-			}
-			else
-			{
-				parts.push(`${RED_BOLD}${lineNum}${RESET} | ${lineContent}`);
-			}
+			parts.push(`${RED_BOLD}${lineNum}${RESET} | ${highlightContent(lineContent)}`);
 		}
 		else
 		{
@@ -533,10 +532,57 @@ function logSourceError(ex, body, source, functionCallLocations)
 	}
 
 	console.log(parts.join("\n"));
-	return true;
 }
 
-async function runCode(code, source, functionCallLocations, baseDir = process.cwd())
+function logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges)
+{
+	const stack = ex.stack || `${ex}`;
+	const fragmentMatch = stack.match(/\.__fragments_[^:]+\.mjs:(\d+):\d+/);
+
+	if (!fragmentMatch) return false;
+
+	const errorLineInBody = parseInt(fragmentMatch[1]);
+	const bodyLine = body.split("\n")[errorLineInBody - 1] || "";
+	const callMatch = bodyLine.match(/__plectaOutput\[(\d+)\]\s*=\s*([A-Za-z_$][\w$]*)/);
+
+	if (callMatch)
+	{
+		const [, id, funcName] = callMatch;
+		const location = functionCallLocations[id];
+
+		if (!location) return false;
+
+		renderContext(source, location.lineNum, lineContent =>
+		{
+			const funcIdx = lineContent.indexOf(funcName);
+
+			if (funcIdx >= 0)
+			{
+				const before = lineContent.slice(0, funcIdx);
+				const after = lineContent.slice(funcIdx + funcName.length);
+				return `${before}${RED_BOLD}${funcName}${RESET}${after}`;
+			}
+
+			return lineContent;
+		});
+
+		return true;
+	}
+
+	for (const range of declarationBlockRanges)
+	{
+		if (errorLineInBody >= range.generatedStart && errorLineInBody <= range.generatedEnd)
+		{
+			const originalLine = range.originalStart + (errorLineInBody - range.generatedStart);
+			renderContext(source, originalLine, lineContent => `${RED_BOLD}${lineContent}${RESET}`);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+async function runCode(code, source, functionCallLocations, declarationBlockRanges, baseDir = process.cwd())
 {
 	const body = `export const __plectaOutput = {};
 ${code}`;
@@ -560,14 +606,13 @@ ${code}`;
 	{
 		await unlink(path).catch(() => {});
 		pendingCleanup.delete(path);
-		logSourceError(ex, body, source, functionCallLocations);
+		logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges);
 		throw new Error(`${ex}`);
 	}
 }
 
 process.on("exit", () =>
 {
-	// Synchronous cleanup on exit — async fs won't run here
 	for (const path of pendingCleanup)
 	{
 		try { unlinkSync(path); } catch {}
@@ -581,11 +626,17 @@ process.on("SIGINT", () => process.exit(130))
 async function main(input)
 {
 	const desugared = desugar(plecta.match(input));
-	const { codeToExecute, functionCallLocations } = getCode(plecta.match(desugared));
-	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations);
+	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(plecta.match(desugared));
+	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges);
 }
 
 main(String.raw`
+
+
+	@@@
+		cosole.log("hi");
+	@@@
+
 	@f[idk]
 	# Heading
 	## subheading
