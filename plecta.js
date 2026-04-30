@@ -563,7 +563,7 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 				return `${before}${RED_BOLD}${funcName}${RESET}${after}`;
 			}
 
-			return lineContent;
+			return `${RED_BOLD}${lineContent}${RESET}`;
 		});
 
 		return true;
@@ -631,13 +631,6 @@ async function main(input)
 }
 
 main(String.raw`
-
-
-	@@@
-		cosole.log("hi");
-	@@@
-
-	@f[idk]
 	# Heading
 	## subheading
 
