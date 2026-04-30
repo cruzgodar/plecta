@@ -1,10 +1,13 @@
 import { randomUUID } from "crypto";
+import { unlinkSync } from "fs";
 import { unlink, writeFile } from "fs/promises";
 import * as ohm from "ohm-js";
 import { join } from "path";
 import process from "process";
 import { pathToFileURL } from "url";
 import { stdlib } from "./stdlib.js";
+
+const pendingCleanup = new Set();
 
 const outputFormat = "html";
 
@@ -431,30 +434,46 @@ ${code}`;
 
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
 
-	console.log(path, body);
-
 	await writeFile(path, body);
+	pendingCleanup.add(path);
 
 	try
 	{
 		const module = await import(pathToFileURL(path).href);
+		await unlink(path).catch(() => {});
+		pendingCleanup.delete(path);
 		return module.__plectaOutput;
 	}
 
 	catch(ex)
 	{
-		throw new Error(`${ex}`);
-	}
-
-	finally
-	{
 		await unlink(path).catch(() => {});
+		pendingCleanup.delete(path);
+		throw new Error(`${ex}`);
 	}
 }
 
+process.on("exit", () =>
+{
+	// Synchronous cleanup on exit — async fs won't run here
+	for (const path of pendingCleanup)
+	{
+		try { unlinkSync(path); } catch {}
+	}
+});
+
+process.on("SIGINT", () => process.exit(130))
 
 
-const input = String.raw`
+
+async function main(input)
+{
+	const desugared = semantics(plecta.match(input)).desugar();
+	const extracted = semantics(plecta.match(desugared)).getCode();
+	const __plectaOutput = await runCode(codeToExecute);
+}
+
+main(String.raw`
 	# Heading
 	## subheading
 
@@ -495,9 +514,4 @@ const input = String.raw`
 	@{
 		A manual raw block
 	}
-`;
-
-const desugared = semantics(plecta.match(input)).desugar();
-const extracted = semantics(plecta.match(desugared)).getCode();
-const __plectaOutput = runCode(codeToExecute);
-console.log(__plectaOutput);
+`)
