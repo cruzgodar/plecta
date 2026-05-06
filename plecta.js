@@ -36,14 +36,14 @@ plecta {
   
   codeBlock
     = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
-      (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any, "${bt}${bt}${bt}">)*
+      (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>)*
       newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
   
   
   
   displayMath
     = spaceOrTab* "$$" spaceOrTab* newline
-      (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any, "$$">)*
+      (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any>)*
       newline spaceOrTab* "$$" &(newline | end)
   
   
@@ -89,13 +89,13 @@ plecta {
   
   link
     = "[" inline<~"]" any>+ "]"
-    "(" (rawBlockEscapable | raw<~")" ~doubleNewline any, ")">)+ ")"
+    "(" (rawBlockEscapable | rawWithEscapable<~")" ~doubleNewline any, ")">)+ ")"
 
   // Code and math are non-folding
-  code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any, "${bt}">)+ "${bt}" ~"${bt}"
+  code = "${bt}" ~"${bt}" (rawBlockEscapable | rawWithEscapable<~"${bt}" ~doubleNewline any, "${bt}">)+ "${bt}" ~"${bt}"
 
-  inlineMath = "$" ~"$" (rawBlockEscapable | raw<~"$" ~doubleNewline any, "$">)+ "$" ~"$"
-  inlineDisplayMath = "$$" (rawBlockEscapable | raw<~"$$" ~doubleNewline any, "$$">)+ "$$"
+  inlineMath = "$" ~"$" (rawBlockEscapable | rawWithEscapable<~"$" ~doubleNewline any, "$">)+ "$" ~"$"
+  inlineDisplayMath = "$$" (rawBlockEscapable | rawWithEscapable<~"$$" ~doubleNewline any, "$$">)+ "$$"
 
   escape = "\\" any
 
@@ -113,7 +113,9 @@ plecta {
  
 
   // The raw content of code blocks, display math, etc.
-  raw<allowed, escapable> = rawEscape<escapable> | functionCall | allowed
+  rawWithEscapable<allowed, escapable> = rawEscape<escapable> | raw<allowed>
+
+  raw<allowed> = functionCall | allowed
   
   rawEscape<escapable> = "\\" escapable
 
@@ -263,12 +265,14 @@ semantics.addOperation("desugar", {
 
 	escape(backslash, escapedCharacter)
 	{
-		return this.sourceString;
+		captureFunctionCall(this);
+		return `@escape{${escapedCharacter.desugar()}}`;
 	},
 
-	rawEscape(_1, escapedCharacter)
+	rawEscape(backslash, escapedCharacter)
 	{
-		return escapedCharacter.desugar();
+		captureFunctionCall(this);
+		return `@escape{${escapedCharacter.desugar()}}`;
 	},
 
 
@@ -445,13 +449,11 @@ semantics.addOperation("getCode", {
 		return body.getCode();
 	},
 
-	// JS needs the unescaped versions of these characters
+	// JS needs closed braces to be unescaped.
+	// Note that this is distinct from rawEscape, and therefore
+	// not customizable (which is intentional; these backslashes
+	// weren't written by the user).
 	rawBlockEscape(_1, escapedCharacter)
-	{
-		return escapedCharacter.sourceString;
-	},
-
-	escape(backslash, escapedCharacter)
 	{
 		return escapedCharacter.sourceString;
 	},
@@ -698,11 +700,15 @@ async function main(input)
 {
 	const desugared = desugar(plecta.match(input));
 
+	console.log(desugared);
+
 	const desugaredMatch = plecta.match(desugared);
 
 	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(desugaredMatch);
 
 	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges);
+
+	console.log(__plectaOutput);
 	
 	const replacedWithCodeOutput = insertCodeOutput(desugaredMatch, __plectaOutput);
 
@@ -750,8 +756,8 @@ const output = main(String.raw`
 		raw html
 	</a>
 
-	Paragraph with *italic*, **bold**, ***bolditalic***,
-	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
+	Paragraph with *italic*[oops], **bold}\* **, ***bolditalic***,
+	${bt}code${bt}, $math\$$, $$displaystyle math$$, [a link](to somewhere),
 	<span style="something">html</span>, and escaped characters: \@x \*c\*
 	\$ \${bt}. Also a @f [function call]{with a raw input \} } [
 		and escaped characters \]

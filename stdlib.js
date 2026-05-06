@@ -60,6 +60,14 @@ const html = {
 	{
 		return `$\\displaystyle ${body}$`;
 	},
+
+	escape(body)
+	{
+		console.log("ESCAPE" + body)
+		return body === "$" || body === "$$"
+			? `\\${body}`
+			: body;
+	}
 };
 
 export const stdlib = { html };
