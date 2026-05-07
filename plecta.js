@@ -172,19 +172,19 @@ semantics.addOperation("desugar", {
 	heading(leadingSpace, hashes, _2, body)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}@heading{${hashes.sourceString.length}}[${body.desugar()}]`;
+		return `${leadingSpace.desugar()}@(heading{${hashes.sourceString.length}}[${body.desugar()}])`;
 	},
 
 	codeBlock(leadingSpace, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}@codeBlock{${language.desugar()}}{${body.desugar()}}`;
+		return `${leadingSpace.desugar()}@(codeBlock{${language.desugar()}}{${body.desugar()}})`;
 	},
 
 	displayMath(leadingSpace, _2, _3, _4, body, _5, _6, _7, _8)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}@displayMath{${body.desugar()}}`;
+		return `${leadingSpace.desugar()}@(displayMath{${body.desugar()}})`;
 	},
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -198,7 +198,7 @@ semantics.addOperation("desugar", {
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
-		return `${leadingSpace.desugar()}@unorderedList[${firstItem.desugar()}]${restItemsWrapped}`;
+		return `${leadingSpace.desugar()}@(unorderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
 	unorderedItem(_1, _2, _3, body)
@@ -211,7 +211,7 @@ semantics.addOperation("desugar", {
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
-		return `${leadingSpace.desugar()}@orderedList[${firstItem.desugar()}]${restItemsWrapped}`;
+		return `${leadingSpace.desugar()}@(orderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
 	orderedItem(_1, _2, _3, body)
@@ -224,55 +224,55 @@ semantics.addOperation("desugar", {
 	boldItalic(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@boldItalic[${body.desugar()}]`;
+		return `@(boldItalic[${body.desugar()}])`;
 	},
 
 	bold(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@bold[${body.desugar()}]`;
+		return `@(bold[${body.desugar()}])`;
 	},
 
 	italic(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@italic[${body.desugar()}]`;
+		return `@(italic[${body.desugar()}])`;
 	},
 
 	link(_1, displayText, _2, _3, url, _4)
 	{
 		captureFunctionCall(this);
-		return `@link[${displayText.desugar()}]{${url.desugar()}}`;
+		return `@(link[${displayText.desugar()}]{${url.desugar()}})`;
 	},
 
 	code(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@code{${body.desugar()}}`;
+		return `@(code{${body.desugar()}})`;
 	},
 
 	inlineMath(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@inlineMath{${body.desugar()}}`;
+		return `@(inlineMath{${body.desugar()}})`;
 	},
 
 	inlineDisplayMath(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@inlineDisplayMath{${body.desugar()}}`;
+		return `@(inlineDisplayMath{${body.desugar()}})`;
 	},
 
 	escape(backslash, escapedCharacter)
 	{
 		captureFunctionCall(this);
-		return `@escape{${escapedCharacter.desugar()}}`;
+		return `@(escape{${escapedCharacter.desugar()}})`;
 	},
 
 	rawEscape(backslash, escapedCharacter)
 	{
 		captureFunctionCall(this);
-		return `@escape{${escapedCharacter.desugar()}}`;
+		return `@(escape{${escapedCharacter.desugar()}})`;
 	},
 
 
@@ -356,11 +356,23 @@ semantics.addOperation("desugar", {
 // getCode walks the desugared parse tree in the same order desugar walked the
 // original, so the nth function call here corresponds to the nth captured
 // location — we use that to rekey locations by desugared startIdx.
+//
+// Function-call arguments are emitted as JS template literals so that nested
+// function calls can interpolate via `${__plectaOutput[<id>]}`. Raw text
+// pieces therefore need to be escaped for use inside a template literal.
 let codeToExecute = "";
 let nextGetCodeId = 0;
 let locationsByStartIdx = {};
 let nextGetCodeDeclarationId = 0;
 let declarationBlockRanges = [];
+
+function escapeForTemplate(s)
+{
+	return s
+		.replace(/\\/g, "\\\\")
+		.replace(/`/g, "\\`")
+		.replace(/\$\{/g, "\\${");
+}
 
 semantics.addOperation("getCode", {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -395,12 +407,12 @@ semantics.addOperation("getCode", {
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
 		const functionArguments = spacePaddedBlocks.children
-			.map(block => JSON.stringify(block.getCode()))
+			.map(block => "`" + block.getCode() + "`")
 			.join(",");
 
 		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${functionArguments});\n`;
 
-		return "";
+		return "${__plectaOutput[" + id + "]}";
 	},
 
 	functionCall_bare(_1, _2, name, spacePaddedBlocks)
@@ -411,12 +423,12 @@ semantics.addOperation("getCode", {
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
 		const functionArguments = spacePaddedBlocks.children
-			.map(block => JSON.stringify(block.getCode()))
+			.map(block => "`" + block.getCode() + "`")
 			.join(",");
 
 		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${functionArguments});\n`;
 
-		return "";
+		return "${__plectaOutput[" + id + "]}";
 	},
 
 	functionCall_raw(_1, _2, block)
@@ -455,14 +467,19 @@ semantics.addOperation("getCode", {
 	// weren't written by the user).
 	rawBlockEscape(_1, escapedCharacter)
 	{
-		return escapedCharacter.sourceString;
+		return escapeForTemplate(escapedCharacter.sourceString);
+	},
+
+	escape(backslash, escapedCharacter)
+	{
+		return escapeForTemplate(escapedCharacter.sourceString);
 	},
 
 
 
 	_terminal()
 	{
-		return this.sourceString;
+		return escapeForTemplate(this.sourceString);
 	},
 
 	_nonterminal(...children)
@@ -737,9 +754,9 @@ const output = main(String.raw`
 			return "output";
 		}
 
-		function g()
+		function g(x)
 		{
-			return "output";
+			return parseInt(x) + 1;
 		}
 	@@@tex
 		// declaration
@@ -762,6 +779,7 @@ const output = main(String.raw`
 	\$ \${bt}. Also a @f [function call]{with a raw input \} } [
 		and escaped characters \]
 	] [and a separated line @g[with a function]]
+	Also addition: @g[1] @g[@g[1]] @g[@g[1]] @{raw}{next to braces}
 
 	@{
 		A manual raw block
