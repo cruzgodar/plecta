@@ -36,14 +36,14 @@ plecta {
   
   codeBlock
     = spaceOrTab* "${bt}${bt}${bt}" spaceOrTab* alnum* spaceOrTab* newline
-      (rawBlockEscapable | raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>)*
+      raw<~(newline spaceOrTab* "${bt}${bt}${bt}" (newline | end)) any>*
       newline spaceOrTab* "${bt}${bt}${bt}" &(newline | end)
   
   
   
   displayMath
     = spaceOrTab* "$$" spaceOrTab* newline
-      (rawBlockEscapable | raw<~(newline spaceOrTab* "$$" (newline | end)) any>)*
+      raw<~(newline spaceOrTab* "$$" (newline | end)) any>*
       newline spaceOrTab* "$$" &(newline | end)
   
   
@@ -69,7 +69,7 @@ plecta {
   orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<~(newline | end) any>+
   orderedItemStarter
     = (digit+ ".") --numeric
-    | "+"      --plus
+    | "+"          --plus
   
   
   
@@ -89,31 +89,30 @@ plecta {
   
   link
     = "[" inline<~"]" any>+ "]"
-    "(" (rawBlockEscapable | raw<~")" ~doubleNewline any>)+ ")"
+      "(" raw<~")" ~doubleNewline any>+ ")"
 
   // Code and math are non-folding
-  code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any>)+ "${bt}" ~"${bt}"
+  code = "${bt}" ~"${bt}" raw<~"${bt}" ~doubleNewline any>+ "${bt}" ~"${bt}"
 
-  inlineMath = "$" ~"$" (rawBlockEscapable | raw<~"$" ~doubleNewline any>)+ "$" ~"$"
-  inlineDisplayMath = "$$" (rawBlockEscapable | raw<~"$$" ~doubleNewline any>)+ "$$"
+  math = "$" ~"$" raw<~"$" ~doubleNewline any>+ "$" ~"$"
+  inlineDisplayMath = "$$" raw<~"$$" ~doubleNewline any>+ "$$"
 
-  escape = "\\" any
+  inline<allowed> = parsedBlockEscapable | inlineWithoutEscapable<allowed>
 
-  inline<allowed>
+  inlineWithoutEscapable<allowed>
     = boldItalic
     | bold
     | italic
     | code
-    | inlineMath
+    | math
     | inlineDisplayMath
     | link
     | functionCall
-    | escape
     | allowed
  
 
   // The raw content of code blocks, display math, etc.
-  raw<allowed> = functionCall | allowed
+  raw<allowed> = rawBlockEscapable | functionCall | allowed
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
@@ -123,11 +122,11 @@ plecta {
   
   
   functionCall
-    = "@" space* "(" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
-    | "@" space* jsIdentifier spacePaddedBlock*                       --bare
-    | "@" space* rawBlock                                             --raw
-	| "@}"                                                            --closeBrace
-    | "@@"                                                            --escaped
+    = "@" spaceOrTab* "(" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
+    | "@" spaceOrTab* jsIdentifier spacePaddedBlock*                       --bare
+    | "@" spaceOrTab* rawBlock                                             --raw
+    | "@" (~space any)                                                     --escaped
+	| "@" space                                                            --invalid
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
@@ -135,9 +134,20 @@ plecta {
   
   spacePaddedBlock = space* parsedOrRawBlock
   parsedOrRawBlock = parsedBlock | rawBlock
-  parsedBlock = "[" inline<~"]" any>+ "]"
-  rawBlock = "{" (functionCall | (~"}" any))+ "}"
+
+  parsedBlock
+	= "###[" inlineWithoutEscapable<~"]###" any>+ "]###"
+	| "##[" inlineWithoutEscapable<~"]##" any>+ "]##"
+	| "#[" inlineWithoutEscapable<~"]#" any>+ "]#"
+	| "[" inlineWithoutEscapable<~"]" any>+ "]"
+
+  rawBlock
+	= "###{" (functionCall | (~"}###" any))+ "}###"
+	| "##{" (functionCall | (~"}##" any))+ "}##"
+	| "#{" (functionCall | (~"}#" any))+ "}#"
+	| "{" (functionCall | (~"}" any))+ "}"
   
+  parsedBlockEscapable = "]"
   rawBlockEscapable = "}"
 }`;
 
@@ -247,22 +257,16 @@ semantics.addOperation("desugar", {
 		return `@(code{${body.desugar()}})`;
 	},
 
-	inlineMath(_1, body, _2)
+	math(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(inlineMath{${body.desugar()}})`;
+		return `@(math{${body.desugar()}})`;
 	},
 
 	inlineDisplayMath(_1, body, _2)
 	{
 		captureFunctionCall(this);
 		return `@(inlineDisplayMath{${body.desugar()}})`;
-	},
-
-	escape(backslash, escapedCharacter)
-	{
-		captureFunctionCall(this);
-		return `@(escape{${escapedCharacter.desugar()}})`;
 	},
 
 
@@ -284,14 +288,15 @@ semantics.addOperation("desugar", {
 		return `@${block.desugar()}`;
 	},
 
-	functionCall_closeBrace(_1)
+	functionCall_escaped(_1, character)
 	{
 		return this.sourceString;
 	},
 
-	functionCall_escaped(_1)
+	functionCall_invalid(_1, space)
 	{
-		return this.sourceString;
+		// TODO
+		throw new Error();
 	},
 
 	jsIdentifier(_1, _2)
@@ -304,21 +309,26 @@ semantics.addOperation("desugar", {
 		return block.desugar();
 	},
 
-	parsedBlock(_1, body, _2)
+	parsedBlock(start, body, end)
 	{
-		return `[${body.desugar()}]`;
+		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
 	},
 
-	rawBlock(_1, body, _2)
+	rawBlock(start, body, end)
 	{
-		return `{${body.desugar()}}`;
+		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
 	},
 
+	
 
+	parsedBlockEscapable(character)
+	{
+		return `@${character.desugar()}`;
+	},
 
 	rawBlockEscapable(character)
 	{
-		return "@" + character.desugar();
+		return `@${character.desugar()}`;
 	},
 
 
@@ -426,14 +436,9 @@ semantics.addOperation("getCode", {
 		return block.getCode();
 	},
 
-	functionCall_closeBrace(_1)
+	functionCall_escaped(_1, character)
 	{
-		return "}";
-	},
-
-	functionCall_escaped(_1)
-	{
-		return "@";
+		return character.getCode();
 	},
 
 	jsIdentifier(_1, _2)
@@ -454,15 +459,6 @@ semantics.addOperation("getCode", {
 	rawBlock(_1, body, _2)
 	{
 		return body.getCode();
-	},
-
-	// JS needs closed braces to be unescaped.
-	// Note that this is distinct from rawEscape, and therefore
-	// not customizable (which is intentional; these backslashes
-	// weren't written by the user).
-	escape(backslash, escapedCharacter)
-	{
-		return escapeForTemplate(escapedCharacter.sourceString);
 	},
 
 
@@ -508,24 +504,14 @@ semantics.addOperation("insertCodeOutput(__plectaOutput)", {
 		return block.insertCodeOutput(this.args.__plectaOutput);
 	},
 
-	functionCall_closeBrace(_1)
+	functionCall_escaped(_1, character)
 	{
-		return "}";
-	},
-
-	functionCall_escaped(_1)
-	{
-		return "@";
+		return character.getCode();
 	},
 
 	rawBlock(_1, body, _2)
 	{
 		return body.insertCodeOutput(this.args.__plectaOutput);
-	},
-
-	escape(backslash, escapedCharacter)
-	{
-		return escapedCharacter.sourceString;
 	},
 
 
@@ -753,15 +739,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 		raw html
 	</a>
 
-	Paragraph with *italic*[oops], **bold}\* **, ***bolditalic***,
-	${bt}code${bt}, $math\$$, $$displaystyle math$$, [a link](to somewhere),
-	, and escaped characters: \@x \*c\* \$. Also a @f [function call]{with a raw input \} } [
-		and escaped characters \]
-	] [and a separated line @g[with a function]]
-	Also addition: @g[1] @g[@g[1]] @g[@g[1]] @{raw}{next to braces}
+	Paragraph with *italic*[oops], **bold ] **, ***bolditalic***,
+	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
+	, and escaped characters: 
 
-	@{
-		A manual raw block
-	}
+	$math$
+	@math{so many \$}
 `).then(console.log);
 }

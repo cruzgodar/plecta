@@ -51,7 +51,7 @@ const html = {
 		return `<code>${body}</code>`;
 	},
 
-	inlineMath(body)
+	math(body)
 	{
 		return `$${body}$`;
 	},
