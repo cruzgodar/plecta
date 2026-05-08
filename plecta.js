@@ -89,13 +89,13 @@ plecta {
   
   link
     = "[" inline<~"]" any>+ "]"
-    "(" (rawBlockEscapable | rawWithEscapable<~")" ~doubleNewline any, ")">)+ ")"
+    "(" (rawBlockEscapable | raw<~")" ~doubleNewline any>)+ ")"
 
   // Code and math are non-folding
-  code = "${bt}" ~"${bt}" (rawBlockEscapable | rawWithEscapable<~"${bt}" ~doubleNewline any, "${bt}">)+ "${bt}" ~"${bt}"
+  code = "${bt}" ~"${bt}" (rawBlockEscapable | raw<~"${bt}" ~doubleNewline any>)+ "${bt}" ~"${bt}"
 
-  inlineMath = "$" ~"$" (rawBlockEscapable | rawWithEscapable<~"$" ~doubleNewline any, "$">)+ "$" ~"$"
-  inlineDisplayMath = "$$" (rawBlockEscapable | rawWithEscapable<~"$$" ~doubleNewline any, "$$">)+ "$$"
+  inlineMath = "$" ~"$" (rawBlockEscapable | raw<~"$" ~doubleNewline any>)+ "$" ~"$"
+  inlineDisplayMath = "$$" (rawBlockEscapable | raw<~"$$" ~doubleNewline any>)+ "$$"
 
   escape = "\\" any
 
@@ -113,11 +113,7 @@ plecta {
  
 
   // The raw content of code blocks, display math, etc.
-  rawWithEscapable<allowed, escapable> = rawEscape<escapable> | raw<allowed>
-
   raw<allowed> = functionCall | allowed
-  
-  rawEscape<escapable> = "\\" escapable
 
   newline = "\r\n" | "\n" | "\r"
   doubleNewline = newline spaceOrTab* newline
@@ -130,7 +126,8 @@ plecta {
     = "@" space* "(" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
     | "@" space* jsIdentifier spacePaddedBlock*                       --bare
     | "@" space* rawBlock                                             --raw
-    | "\\@"                                                           --escaped
+	| "@}"                                                            --closeBrace
+    | "@@"                                                            --escaped
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
@@ -139,9 +136,8 @@ plecta {
   spacePaddedBlock = space* parsedOrRawBlock
   parsedOrRawBlock = parsedBlock | rawBlock
   parsedBlock = "[" inline<~"]" any>+ "]"
-  rawBlock = "{" (rawBlockEscape | functionCall | (~"}" any))+ "}"
+  rawBlock = "{" (functionCall | (~"}" any))+ "}"
   
-  rawBlockEscape = "\\" rawBlockEscapable
   rawBlockEscapable = "}"
 }`;
 
@@ -269,12 +265,6 @@ semantics.addOperation("desugar", {
 		return `@(escape{${escapedCharacter.desugar()}})`;
 	},
 
-	rawEscape(backslash, escapedCharacter)
-	{
-		captureFunctionCall(this);
-		return `@(escape{${escapedCharacter.desugar()}})`;
-	},
-
 
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
@@ -292,6 +282,11 @@ semantics.addOperation("desugar", {
 	functionCall_raw(_1, _2, block)
 	{
 		return `@${block.desugar()}`;
+	},
+
+	functionCall_closeBrace(_1)
+	{
+		return this.sourceString;
 	},
 
 	functionCall_escaped(_1)
@@ -319,16 +314,11 @@ semantics.addOperation("desugar", {
 		return `{${body.desugar()}}`;
 	},
 
-	rawBlockEscape(_1, _2)
-	{
-		return this.sourceString;
-	},
-
 
 
 	rawBlockEscapable(character)
 	{
-		return "\\" + character.desugar();
+		return "@" + character.desugar();
 	},
 
 
@@ -436,6 +426,11 @@ semantics.addOperation("getCode", {
 		return block.getCode();
 	},
 
+	functionCall_closeBrace(_1)
+	{
+		return "}";
+	},
+
 	functionCall_escaped(_1)
 	{
 		return "@";
@@ -465,11 +460,6 @@ semantics.addOperation("getCode", {
 	// Note that this is distinct from rawEscape, and therefore
 	// not customizable (which is intentional; these backslashes
 	// weren't written by the user).
-	rawBlockEscape(_1, escapedCharacter)
-	{
-		return escapeForTemplate(escapedCharacter.sourceString);
-	},
-
 	escape(backslash, escapedCharacter)
 	{
 		return escapeForTemplate(escapedCharacter.sourceString);
@@ -518,6 +508,11 @@ semantics.addOperation("insertCodeOutput(__plectaOutput)", {
 		return block.insertCodeOutput(this.args.__plectaOutput);
 	},
 
+	functionCall_closeBrace(_1)
+	{
+		return "}";
+	},
+
 	functionCall_escaped(_1)
 	{
 		return "@";
@@ -526,11 +521,6 @@ semantics.addOperation("insertCodeOutput(__plectaOutput)", {
 	rawBlock(_1, body, _2)
 	{
 		return body.insertCodeOutput(this.args.__plectaOutput);
-	},
-
-	rawBlockEscape(_1, escapedCharacter)
-	{
-		return escapedCharacter.sourceString;
 	},
 
 	escape(backslash, escapedCharacter)
@@ -713,28 +703,18 @@ process.on("SIGINT", () => process.exit(130))
 
 
 
-async function main(input)
+export async function compile(input)
 {
 	const desugared = desugar(plecta.match(input));
-
-	console.log(desugared);
-
 	const desugaredMatch = plecta.match(desugared);
-
 	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(desugaredMatch);
-
 	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges);
-
-	console.log(__plectaOutput);
-	
-	const replacedWithCodeOutput = insertCodeOutput(desugaredMatch, __plectaOutput);
-
-	console.log(replacedWithCodeOutput);
-
-	return replacedWithCodeOutput;
+	return insertCodeOutput(desugaredMatch, __plectaOutput);
 }
 
-const output = main(String.raw`
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+{
+	compile(String.raw`
 	# Heading
 	## subheading
 
@@ -775,8 +755,7 @@ const output = main(String.raw`
 
 	Paragraph with *italic*[oops], **bold}\* **, ***bolditalic***,
 	${bt}code${bt}, $math\$$, $$displaystyle math$$, [a link](to somewhere),
-	<span style="something">html</span>, and escaped characters: \@x \*c\*
-	\$ \${bt}. Also a @f [function call]{with a raw input \} } [
+	, and escaped characters: \@x \*c\* \$. Also a @f [function call]{with a raw input \} } [
 		and escaped characters \]
 	] [and a separated line @g[with a function]]
 	Also addition: @g[1] @g[@g[1]] @g[@g[1]] @{raw}{next to braces}
@@ -784,4 +763,5 @@ const output = main(String.raw`
 	@{
 		A manual raw block
 	}
-`);
+`).then(console.log);
+}

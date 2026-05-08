@@ -63,7 +63,6 @@ const html = {
 
 	escape(body)
 	{
-		console.log("ESCAPE" + body)
 		return body === "$" || body === "$$"
 			? `\\${body}`
 			: body;

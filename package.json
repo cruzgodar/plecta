@@ -5,7 +5,7 @@
   "description": "A markdown-like language with JavaScript folding that can compile to HTML and LaTeX",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "repository": {
     "type": "git",
