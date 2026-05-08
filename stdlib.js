@@ -61,12 +61,8 @@ const html = {
 		return `$\\displaystyle ${body}$`;
 	},
 
-	escape(body)
-	{
-		return body === "$" || body === "$$"
-			? `\\${body}`
-			: body;
-	}
+	$: "$",
+	_: "_",
 };
 
 export const stdlib = { html };

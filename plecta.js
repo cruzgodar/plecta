@@ -410,7 +410,9 @@ semantics.addOperation("getCode", {
 			.map(block => "`" + block.getCode() + "`")
 			.join(",");
 
-		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${functionArguments});\n`;
+		const nameCode = name.getCode();
+
+		codeToExecute += `__plectaOutput[${id}] = typeof ${nameCode} === "function" ? ${nameCode}(${functionArguments}) : ${nameCode};\n`;
 
 		return "${__plectaOutput[" + id + "]}";
 	},
@@ -426,7 +428,9 @@ semantics.addOperation("getCode", {
 			.map(block => "`" + block.getCode() + "`")
 			.join(",");
 
-		codeToExecute += `__plectaOutput[${id}] = ${name.getCode()}(${functionArguments});\n`;
+		const nameCode = name.getCode();
+
+		codeToExecute += `__plectaOutput[${id}] = typeof ${nameCode} === "function" ? ${nameCode}(${functionArguments}) : ${nameCode};\n`;
 
 		return "${__plectaOutput[" + id + "]}";
 	},
@@ -741,9 +745,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 
 	Paragraph with *italic*[oops], **bold ] **, ***bolditalic***,
 	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
-	, and escaped characters: 
-
-	$math$
-	@math{so many \$}
+	, and escaped characters: @x, @$, @_
 `).then(console.log);
 }
