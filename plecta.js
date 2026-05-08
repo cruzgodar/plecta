@@ -295,8 +295,16 @@ semantics.addOperation("desugar", {
 
 	functionCall_invalid(_1, space)
 	{
-		// TODO
-		throw new Error();
+		const { lineNum, colNum } = this.source.getLineAndColumn();
+		renderContext(this.source.sourceString, lineNum, line =>
+		{
+			const startCol = colNum - 1;
+			const before = line.slice(0, startCol);
+			const offending = line.slice(startCol, startCol + 2); // @ + the space
+			const after = line.slice(startCol + 2);
+			return `${before}${RED_BOLD}${offending}${RESET}${after}`;
+		});
+		throw new Error(`Expected an identifier, parentheses, or raw block following @.`);
 	},
 
 	jsIdentifier(_1, _2)
@@ -412,7 +420,14 @@ semantics.addOperation("getCode", {
 
 		const nameCode = name.getCode();
 
-		codeToExecute += `__plectaOutput[${id}] = typeof ${nameCode} === "function" ? ${nameCode}(${functionArguments}) : ${nameCode};\n`;
+		// With args, do a plain call so a non-function (i.e. a constant) lets
+		// JS throw a TypeError that logSourceError can render. Without args,
+		// keep the typeof guard so a bare `@x` resolves to the constant value.
+		const rhs = spacePaddedBlocks.children.length > 0
+			? `${nameCode}(${functionArguments})`
+			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
+
+		codeToExecute += `__plectaOutput[${id}] = ${rhs};\n`;
 
 		return "${__plectaOutput[" + id + "]}";
 	},
@@ -430,7 +445,11 @@ semantics.addOperation("getCode", {
 
 		const nameCode = name.getCode();
 
-		codeToExecute += `__plectaOutput[${id}] = typeof ${nameCode} === "function" ? ${nameCode}(${functionArguments}) : ${nameCode};\n`;
+		const rhs = spacePaddedBlocks.children.length > 0
+			? `${nameCode}(${functionArguments})`
+			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
+
+		codeToExecute += `__plectaOutput[${id}] = ${rhs};\n`;
 
 		return "${__plectaOutput[" + id + "]}";
 	},
@@ -613,7 +632,10 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 
 	const errorLineInBody = parseInt(fragmentMatch[1]);
 	const bodyLine = body.split("\n")[errorLineInBody - 1] || "";
-	const callMatch = bodyLine.match(/__plectaOutput\[(\d+)\]\s*=\s*([A-Za-z_$][\w$]*)/);
+	// Matches both forms emitted by getCode:
+	//   __plectaOutput[N] = name(...);
+	//   __plectaOutput[N] = typeof name === "function" ? name() : name;
+	const callMatch = bodyLine.match(/__plectaOutput\[(\d+)\]\s*=\s*(?:typeof\s+)?([A-Za-z_$][\w$]*)/);
 
 	if (callMatch)
 	{
@@ -728,6 +750,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 		{
 			return parseInt(x) + 1;
 		}
+		const x = 1;
 	@@@tex
 		// declaration
 	@@@
@@ -745,6 +768,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 
 	Paragraph with *italic*[oops], **bold ] **, ***bolditalic***,
 	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
-	, and escaped characters: @x, @$, @_
+	, and escaped characters: @x[1] , @$, @_
 `).then(console.log);
 }
