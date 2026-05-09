@@ -9,7 +9,7 @@ import { stdlib } from "./stdlib.js";
 
 const pendingCleanup = new Set();
 
-const outputFormat = "html";
+const outputFormat = "tex";
 
 const bt = "`";
 
@@ -366,13 +366,20 @@ semantics.addOperation("desugar", {
 // location — we use that to rekey locations by desugared startIdx.
 //
 // Function-call arguments are emitted as JS template literals so that nested
-// function calls can interpolate via `${__plectaOutput[<id>]}`. Raw text
+// function calls can interpolate via `${<storageName>[<id>]}`. Raw text
 // pieces therefore need to be escaped for use inside a template literal.
+//
+// `storageName` is the identifier under which results are accumulated in the
+// generated module. It is randomized per compile (see the getCode wrapper)
+// so that user code in declaration blocks can't reach in by name and tamper
+// with it; the module re-exports it under the stable alias `__plectaOutput`
+// so the host's `module.__plectaOutput` read still resolves.
 let codeToExecute = "";
 let nextGetCodeId = 0;
 let locationsByStartIdx = {};
 let nextGetCodeDeclarationId = 0;
 let declarationBlockRanges = [];
+let storageName = "__plectaOutput";
 
 function escapeForTemplate(s)
 {
@@ -427,9 +434,9 @@ semantics.addOperation("getCode", {
 			? `${nameCode}(${functionArguments})`
 			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
 
-		codeToExecute += `__plectaOutput[${id}] = ${rhs};\n`;
+		codeToExecute += `${storageName}[${id}] = ${rhs};\n`;
 
-		return "${__plectaOutput[" + id + "]}";
+		return "${" + storageName + "[" + id + "]}";
 	},
 
 	functionCall_bare(_1, _2, name, spacePaddedBlocks)
@@ -449,9 +456,9 @@ semantics.addOperation("getCode", {
 			? `${nameCode}(${functionArguments})`
 			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
 
-		codeToExecute += `__plectaOutput[${id}] = ${rhs};\n`;
+		codeToExecute += `${storageName}[${id}] = ${rhs};\n`;
 
-		return "${__plectaOutput[" + id + "]}";
+		return "${" + storageName + "[" + id + "]}";
 	},
 
 	functionCall_raw(_1, _2, block)
@@ -572,11 +579,15 @@ function getCode(matchResult)
 	locationsByStartIdx = {};
 	nextGetCodeDeclarationId = 0;
 	declarationBlockRanges = [];
+	storageName = `__plecta_${randomUUID().replaceAll("-", "_")}`;
+
 	semantics(matchResult).getCode();
+
 	return {
 		codeToExecute,
 		functionCallLocations: locationsByStartIdx,
 		declarationBlockRanges,
+		storageName,
 	};
 }
 
@@ -623,7 +634,7 @@ function renderContext(source, errorLine, highlightContent)
 	console.log(parts.join("\n"));
 }
 
-function logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges)
+function logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName)
 {
 	const stack = ex.stack || `${ex}`;
 	const fragmentMatch = stack.match(/\.__fragments_[^:]+\.mjs:(\d+):\d+/);
@@ -633,9 +644,12 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 	const errorLineInBody = parseInt(fragmentMatch[1]);
 	const bodyLine = body.split("\n")[errorLineInBody - 1] || "";
 	// Matches both forms emitted by getCode:
-	//   __plectaOutput[N] = name(...);
-	//   __plectaOutput[N] = typeof name === "function" ? name() : name;
-	const callMatch = bodyLine.match(/__plectaOutput\[(\d+)\]\s*=\s*(?:typeof\s+)?([A-Za-z_$][\w$]*)/);
+	//   <storageName>[N] = name(...);
+	//   <storageName>[N] = typeof name === "function" ? name() : name;
+	// storageName is `__plecta_<uuid-hex>` (only [a-zA-Z0-9_]), regex-safe.
+	const callMatch = bodyLine.match(new RegExp(
+		`${storageName}\\[(\\d+)\\]\\s*=\\s*(?:typeof\\s+)?([A-Za-z_$][\\w$]*)`
+	));
 
 	if (callMatch)
 	{
@@ -674,10 +688,14 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 	return false;
 }
 
-async function runCode(code, source, functionCallLocations, declarationBlockRanges, baseDir = process.cwd())
+async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, baseDir = process.cwd())
 {
-	const body = `export const __plectaOutput = {};
+	// One-line prelude so declarationBlockRanges' line offset (linesBefore + 2)
+	// stays correct. The storage var is randomized; the export-as alias keeps
+	// `module.__plectaOutput` resolving for the host-side read below.
+	const body = `const ${storageName} = {}; export { ${storageName} as __plectaOutput };
 ${code}`;
+	if (process.env.PLECTA_DEBUG_BODY) console.error("---BODY---\n" + body + "\n---END---");
 
 	const url = URL.createObjectURL(new Blob([body], { type: "text/javascript" }));
 
@@ -698,7 +716,7 @@ ${code}`;
 	{
 		await unlink(path).catch(() => {});
 		pendingCleanup.delete(path);
-		logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges);
+		logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName);
 		throw new Error(`${ex}`);
 	}
 }
@@ -715,12 +733,12 @@ process.on("SIGINT", () => process.exit(130))
 
 
 
-export async function compile(input)
+export async function compile(input, )
 {
 	const desugared = desugar(plecta.match(input));
 	const desugaredMatch = plecta.match(desugared);
-	const { codeToExecute, functionCallLocations, declarationBlockRanges } = getCode(desugaredMatch);
-	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges);
+	const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch);
+	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
 	return insertCodeOutput(desugaredMatch, __plectaOutput);
 }
 
@@ -737,7 +755,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 		}
 	${bt}${bt}${bt}
 	$$
-		\{ 1, 2 \} \$$
+		\{ 1, 2 \}
 	$$
 
 	@@@html
@@ -766,8 +784,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 		raw html
 	</a>
 
-	Paragraph with *italic*[oops], **bold ] **, ***bolditalic***,
+	Paragraph with *italic*[oops], **bold ] @* **, ***bolditalic***,
 	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
-	, and escaped characters: @x[1] , @$, @_
+	, and escaped characters: @$, @_
 `).then(console.log);
 }

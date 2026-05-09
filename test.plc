@@ -29,5 +29,4 @@ declaration2
 
 Paragraph with *italic*, **bold**, ***bolditalic***,
 `code`, $math$, $$displaystyle math$$, [link](somewhere),
-<span style="">html</span>, and escaped characters: \@x \*c\*
-\$ \` \<g>
+<span style="">html</span>, and escaped characters: @@x @*c@*
