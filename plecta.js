@@ -1,15 +1,13 @@
 import { randomUUID } from "crypto";
 import { unlinkSync } from "fs";
-import { unlink, writeFile } from "fs/promises";
+import { readFile, unlink, writeFile } from "fs/promises";
 import * as ohm from "ohm-js";
-import { join } from "path";
+import { extname, join } from "path";
 import process from "process";
 import { pathToFileURL } from "url";
 import { stdlib } from "./stdlib.js";
 
 const pendingCleanup = new Set();
-
-const outputFormat = "tex";
 
 const bt = "`";
 
@@ -380,6 +378,7 @@ let locationsByStartIdx = {};
 let nextGetCodeDeclarationId = 0;
 let declarationBlockRanges = [];
 let storageName = "__plectaOutput";
+let currentOutputFormat = "";
 
 function escapeForTemplate(s)
 {
@@ -394,7 +393,7 @@ semantics.addOperation("getCode", {
 	{
 		const originalStart = declarationBlockOriginalLines[nextGetCodeDeclarationId++];
 
-		if (!scope.sourceString || scope.sourceString === outputFormat)
+		if (!scope.sourceString || scope.sourceString === currentOutputFormat)
 		{
 			const linesBefore = codeToExecute.split("\n").length;
 			codeToExecute += "\n" + body.sourceString + "\n\n";
@@ -572,7 +571,7 @@ function desugar(matchResult)
 	return semantics(matchResult).desugar();
 }
 
-function getCode(matchResult)
+function getCode(matchResult, outputFormat)
 {
 	codeToExecute = "";
 	nextGetCodeId = 0;
@@ -580,6 +579,7 @@ function getCode(matchResult)
 	nextGetCodeDeclarationId = 0;
 	declarationBlockRanges = [];
 	storageName = `__plecta_${randomUUID().replaceAll("-", "_")}`;
+	currentOutputFormat = outputFormat;
 
 	semantics(matchResult).getCode();
 
@@ -594,14 +594,6 @@ function getCode(matchResult)
 function insertCodeOutput(matchResult, __plectaOutput)
 {
 	return semantics(matchResult).insertCodeOutput(__plectaOutput);
-}
-
-if (Object.hasOwn(stdlib, outputFormat))
-{
-	for (const [key, value] of Object.entries(stdlib[outputFormat]))
-	{
-		globalThis[key] = value;
-	}
 }
 
 const RED_BOLD = "\x1b[1;31m";
@@ -733,59 +725,53 @@ process.on("SIGINT", () => process.exit(130))
 
 
 
-export async function compile(input, )
+export async function compile(input, outputFormat)
 {
+	if (Object.hasOwn(stdlib, outputFormat))
+	{
+		for (const [key, value] of Object.entries(stdlib[outputFormat]))
+		{
+			globalThis[key] = value;
+		}
+	}
+
 	const desugared = desugar(plecta.match(input));
 	const desugaredMatch = plecta.match(desugared);
-	const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch);
+	const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
 	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
 	return insertCodeOutput(desugaredMatch, __plectaOutput);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 {
-	compile(String.raw`
-	# Heading
-	## subheading
+	const argv = process.argv.slice(2);
+	const positional = [];
+	let formatOverride = null;
 
-	${bt}${bt}${bt}js
-		f(x)
+	for (let i = 0; i < argv.length; i++)
+	{
+		const arg = argv[i];
+		if (arg === "-f" || arg === "--format")
 		{
-			const y = "\n";
+			formatOverride = argv[++i];
 		}
-	${bt}${bt}${bt}
-	$$
-		\{ 1, 2 \}
-	$$
-
-	@@@html
-		function f()
+		else
 		{
-			return "output";
+			positional.push(arg);
 		}
+	}
 
-		function g(x)
-		{
-			return parseInt(x) + 1;
-		}
-		const x = 1;
-	@@@tex
-		// declaration
-	@@@
+	const [inputPath, outputPath] = positional;
 
-	- 1
-	- 2
-	- 3
+	if (!inputPath || !outputPath)
+	{
+		process.stderr.write("usage: plecta <input> <output> [-f|--format <format>]\n");
+		process.exit(1);
+	}
 
-	1. ordered
-	+  list
+	const outputFormat = formatOverride ?? extname(outputPath).slice(1).toLowerCase();
 
-	<a href="b">
-		raw html
-	</a>
-
-	Paragraph with *italic*[oops], **bold ] @* **, ***bolditalic***,
-	${bt}code${bt}, $math$, $$displaystyle math$$, [a link](to somewhere),
-	, and escaped characters: @$, @_
-`).then(console.log);
+	const input = await readFile(inputPath, "utf-8");
+	const result = await compile(input, outputFormat);
+	await writeFile(outputPath, result);
 }

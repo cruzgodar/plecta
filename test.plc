@@ -9,9 +9,15 @@ math
 $$
 
 @@@html
-declaration1
+	function center(body)
+	{
+		return String.raw`<div style="display: flex; justify-content: center; width: 100%">${body}</div>`;
+	}
 @@@tex
-declaration2
+	function center(body)
+	{
+		return String.raw`\begin{center} ${body} \end{center}`;
+	}
 @@@
 
 - 1
@@ -21,12 +27,8 @@ declaration2
 1. ordered
 +  list
 
-<a
-	href="a"
->
-	raw html
-</a>
-
 Paragraph with *italic*, **bold**, ***bolditalic***,
 `code`, $math$, $$displaystyle math$$, [link](somewhere),
-<span style="">html</span>, and escaped characters: @@x @*c@*
+and escaped characters: @@x @*c@*
+
+@center[centered text!]
