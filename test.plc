@@ -28,7 +28,7 @@ $$
 +  list
 
 Paragraph with *italic*, **bold**, ***bolditalic***,
-`code`, $math$, $$displaystyle math$$, [link](somewhere),
+`code`, $math$, $$displaystyle math$$, [link](to somewhere),
 and escaped characters: @@x @*c@*
 
 @center[centered text!]

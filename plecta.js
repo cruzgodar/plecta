@@ -85,8 +85,10 @@ plecta {
     = "*" ~"*" inline<~"*" any>+ "*" ~"*"
     | "_" ~"_" inline<~"_" any>+ "_" ~"_"
   
+  // This uses inlineWithoutEscapable, because otherwise the display text
+  // can eat ] characters
   link
-    = "[" inline<~"]" any>+ "]"
+    = "[" inlineWithoutEscapable<~"]" any>+ "]"
       "(" raw<~")" ~doubleNewline any>+ ")"
 
   // Code and math are non-folding
