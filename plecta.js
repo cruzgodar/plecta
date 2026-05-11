@@ -11,6 +11,13 @@ const pendingCleanup = new Set();
 
 const bt = "`";
 
+// Named stdlib functions that aren't callable inline as @name[...]. After the
+// body is fully assembled, each is invoked in order on the running result, so
+// the value compile returns is `lastHook(...firstHook(body)...)`. To add
+// another whole-document transform, append its name here and provide a
+// matching function on the format's stdlib entry.
+const POST_COMPILE_HOOKS = ["document"];
+
 const grammar = String.raw`
 plecta {
   document = chunk*
@@ -223,6 +230,11 @@ semantics.addOperation("desugar", {
 	orderedItem(_1, _2, _3, body)
 	{
 		return body.desugar();
+	},
+
+	paragraph(body)
+	{
+		return `@(paragraph[${body.desugar()}])`;
 	},
 
 
@@ -733,6 +745,7 @@ export async function compile(input, outputFormat)
 	{
 		for (const [key, value] of Object.entries(stdlib[outputFormat]))
 		{
+			if (POST_COMPILE_HOOKS.includes(key)) continue;
 			globalThis[key] = value;
 		}
 	}
@@ -741,7 +754,22 @@ export async function compile(input, outputFormat)
 	const desugaredMatch = plecta.match(desugared);
 	const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
 	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
-	return insertCodeOutput(desugaredMatch, __plectaOutput);
+	let result = insertCodeOutput(desugaredMatch, __plectaOutput);
+
+	const formatStdlib = stdlib[outputFormat];
+	if (formatStdlib)
+	{
+		for (const name of POST_COMPILE_HOOKS)
+		{
+			const hook = formatStdlib[name];
+			if (typeof hook === "function")
+			{
+				result = hook(result);
+			}
+		}
+	}
+
+	return result;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)

@@ -1,6 +1,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { compile } from "./plecta.js";
+import { stdlib } from "./stdlib.js";
 
 // Silence console.log globally so logSourceError output (used in the
 // error-reporting tests, which capture it themselves via t.mock.method)
@@ -456,4 +457,43 @@ test("format: unknown format is allowed (no stdlib defaults applied)", async () 
 	// User-defined declaration block under an unknown scope still runs and is usable.
 	const src = `@@@bogus\nfunction greet() { return "hello"; }\n@@@\n@greet`;
 	assert.equal(await compile(src, "bogus"), NL + "hello");
+});
+
+
+// ============================================================================
+// Post-compile hooks
+// ============================================================================
+
+test("document hook: stdlib document wraps the compiled body", async () =>
+{
+	stdlib.html.document = body => `<doc>${body}</doc>`;
+	try
+	{
+		assert.equal(await compile("# X", "html"), "<doc><h1>X</h1></doc>");
+	}
+	finally
+	{
+		delete stdlib.html.document;
+	}
+});
+
+test("document hook: no document registered leaves body unchanged", async () =>
+{
+	assert.equal(await compile("# X", "html"), "<h1>X</h1>");
+});
+
+test("document hook: hook is not callable inline as @document[...]", async (t) =>
+{
+	t.mock.method(console, "log", () => {});
+	stdlib.html.document = body => `WRAP(${body})`;
+	try
+	{
+		// `document` is excluded from the globalThis splat, so referencing it
+		// inline should fail with the standard undefined-function error path.
+		await assert.rejects(compile("@document[x]", "html"));
+	}
+	finally
+	{
+		delete stdlib.html.document;
+	}
 });

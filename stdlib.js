@@ -1,6 +1,23 @@
 const r = String.raw;
 
 const html = {
+	document(body)
+	{
+		return r`<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+
+<body>
+${body}
+</body>
+
+</html>`;
+	},
+
 	heading(headingNumber, body)
 	{
 		return r`<h${headingNumber}>${body}</h${headingNumber}>`;
@@ -26,6 +43,11 @@ const html = {
 	{
 		const itemsHtml = items.map(item => `<li>${item}</li>`).join("");
 		return r`<ol>${itemsHtml}</ol>`;
+	},
+
+	paragraph(body)
+	{
+		return r`<p>${body}</p>`;
 	},
 
 	boldItalic(body)
@@ -70,6 +92,31 @@ const html = {
 
 
 const tex = {
+	document(body)
+	{
+		return r`\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{mathtools}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{graphicx}
+\usepackage[total={7.5in, 10in}, heightrounded]{geometry}
+\usepackage{setspace} \onehalfspacing
+\usepackage[skip=8pt plus 1pt]{parskip}
+\usepackage{hyperref}
+\hypersetup
+{
+    colorlinks = true,
+    allcolors = OliveGreen
+}
+\begin{document}
+${body}
+\end{document}`;
+	},
+
 	heading(headingNumber, body)
 	{
 		const commands = ["chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
@@ -103,6 +150,11 @@ const tex = {
 		return r`\begin{enumerate}
 	${itemsTex}
 \end{enumerate}`;
+	},
+
+	paragraph(body)
+	{
+		return body;
 	},
 
 	boldItalic(body)
