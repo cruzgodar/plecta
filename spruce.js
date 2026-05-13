@@ -133,7 +133,7 @@ spruce {
     | "@" spaceOrTab* jsIdentifier spacePaddedBlock*                       --bare
     | "@" spaceOrTab* rawBlock                                             --raw
     | "@" (~space any)                                                     --escaped
-	| "@" space                                                            --invalid
+    | "@" space                                                            --invalid
     
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
@@ -234,6 +234,7 @@ semantics.addOperation("desugar", {
 
 	paragraph(body)
 	{
+		captureFunctionCall(this);
 		return `@(paragraph[${body.desugar()}])`;
 	},
 
@@ -702,8 +703,6 @@ async function runCode(code, source, functionCallLocations, declarationBlockRang
 	const body = `const ${storageName} = {}; export { ${storageName} as __spruceOutput };
 ${code}`;
 	if (process.env.SPRUCE_DEBUG_BODY) console.error("---BODY---\n" + body + "\n---END---");
-
-	const url = URL.createObjectURL(new Blob([body], { type: "text/javascript" }));
 
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
 
