@@ -1,5 +1,5 @@
 {
-  "name": "plecta",
+  "name": "spruce",
   "version": "1.0.0",
   "type": "module",
   "description": "A markdown-like language with JavaScript folding that can compile to HTML and LaTeX",
@@ -9,14 +9,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cruzgodar/plecta.git"
+    "url": "git+https://github.com/cruzgodar/spruce.git"
   },
   "author": "Cruz Godar",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/cruzgodar/plecta/issues"
+    "url": "https://github.com/cruzgodar/spruce/issues"
   },
-  "homepage": "https://github.com/cruzgodar/plecta#readme",
+  "homepage": "https://github.com/cruzgodar/spruce#readme",
   "dependencies": {
     "ohm-js": "^17.5.0"
   }

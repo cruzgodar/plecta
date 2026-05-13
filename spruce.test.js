@@ -1,6 +1,6 @@
-import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { compile } from "./plecta.js";
+import { test } from "node:test";
+import { compile } from "./spruce.js";
 import { stdlib } from "./stdlib.js";
 
 // Silence console.log globally so logSourceError output (used in the

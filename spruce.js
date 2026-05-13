@@ -19,7 +19,7 @@ const bt = "`";
 const POST_COMPILE_HOOKS = ["document"];
 
 const grammar = String.raw`
-plecta {
+spruce {
   document = chunk*
   
   chunk
@@ -160,9 +160,9 @@ plecta {
 
 
 
-const plecta = ohm.grammar(grammar);
+const spruce = ohm.grammar(grammar);
 
-const semantics = plecta.createSemantics();
+const semantics = spruce.createSemantics();
 
 // Each handler that emits a function call into the desugared output captures
 // its location in the *original* source. The id is a sequential counter shared
@@ -384,14 +384,14 @@ semantics.addOperation("desugar", {
 // `storageName` is the identifier under which results are accumulated in the
 // generated module. It is randomized per compile (see the getCode wrapper)
 // so that user code in declaration blocks can't reach in by name and tamper
-// with it; the module re-exports it under the stable alias `__plectaOutput`
-// so the host's `module.__plectaOutput` read still resolves.
+// with it; the module re-exports it under the stable alias `__spruceOutput`
+// so the host's `module.__spruceOutput` read still resolves.
 let codeToExecute = "";
 let nextGetCodeId = 0;
 let locationsByStartIdx = {};
 let nextGetCodeDeclarationId = 0;
 let declarationBlockRanges = [];
-let storageName = "__plectaOutput";
+let storageName = "__spruceOutput";
 let currentOutputFormat = "";
 
 function escapeForTemplate(s)
@@ -413,7 +413,7 @@ semantics.addOperation("getCode", {
 			codeToExecute += "\n" + body.sourceString + "\n\n";
 
 			// +1: leading "\n" lands the body on the next line in codeToExecute.
-			// +1: runCode prepends an `export const __plectaOutput = {};` line.
+			// +1: runCode prepends an `export const __spruceOutput = {};` line.
 			const generatedStart = linesBefore + 2;
 			const bodyLineCount = body.sourceString.split("\n").length;
 
@@ -524,7 +524,7 @@ semantics.addOperation("getCode", {
 
 
 
-semantics.addOperation("insertCodeOutput(__plectaOutput)", {
+semantics.addOperation("insertCodeOutput(__spruceOutput)", {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
 		return "";
@@ -533,18 +533,18 @@ semantics.addOperation("insertCodeOutput(__plectaOutput)", {
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
 		const id = JSON.stringify(this.source.startIdx);
-		return this.args.__plectaOutput[id];
+		return this.args.__spruceOutput[id];
 	},
 
 	functionCall_bare(_1, _2, name, spacePaddedBlocks)
 	{
 		const id = JSON.stringify(this.source.startIdx);
-		return this.args.__plectaOutput[id];
+		return this.args.__spruceOutput[id];
 	},
 
 	functionCall_raw(_1, _2, block)
 	{
-		return block.insertCodeOutput(this.args.__plectaOutput);
+		return block.insertCodeOutput(this.args.__spruceOutput);
 	},
 
 	functionCall_escaped(_1, character)
@@ -554,7 +554,7 @@ semantics.addOperation("insertCodeOutput(__plectaOutput)", {
 
 	rawBlock(_1, body, _2)
 	{
-		return body.insertCodeOutput(this.args.__plectaOutput);
+		return body.insertCodeOutput(this.args.__spruceOutput);
 	},
 
 
@@ -566,12 +566,12 @@ semantics.addOperation("insertCodeOutput(__plectaOutput)", {
 
 	_nonterminal(...children)
 	{
-		return children.map(c => c.insertCodeOutput(this.args.__plectaOutput)).join("");
+		return children.map(c => c.insertCodeOutput(this.args.__spruceOutput)).join("");
 	},
 
 	_iter(...children)
 	{
-		return children.map(c => c.insertCodeOutput(this.args.__plectaOutput)).join("");
+		return children.map(c => c.insertCodeOutput(this.args.__spruceOutput)).join("");
 	},
 });
 
@@ -592,7 +592,7 @@ function getCode(matchResult, outputFormat)
 	locationsByStartIdx = {};
 	nextGetCodeDeclarationId = 0;
 	declarationBlockRanges = [];
-	storageName = `__plecta_${randomUUID().replaceAll("-", "_")}`;
+	storageName = `__spruce_${randomUUID().replaceAll("-", "_")}`;
 	currentOutputFormat = outputFormat;
 
 	semantics(matchResult).getCode();
@@ -605,9 +605,9 @@ function getCode(matchResult, outputFormat)
 	};
 }
 
-function insertCodeOutput(matchResult, __plectaOutput)
+function insertCodeOutput(matchResult, __spruceOutput)
 {
-	return semantics(matchResult).insertCodeOutput(__plectaOutput);
+	return semantics(matchResult).insertCodeOutput(__spruceOutput);
 }
 
 const RED_BOLD = "\x1b[1;31m";
@@ -652,7 +652,7 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 	// Matches both forms emitted by getCode:
 	//   <storageName>[N] = name(...);
 	//   <storageName>[N] = typeof name === "function" ? name() : name;
-	// storageName is `__plecta_<uuid-hex>` (only [a-zA-Z0-9_]), regex-safe.
+	// storageName is `__spruce_<uuid-hex>` (only [a-zA-Z0-9_]), regex-safe.
 	const callMatch = bodyLine.match(new RegExp(
 		`${storageName}\\[(\\d+)\\]\\s*=\\s*(?:typeof\\s+)?([A-Za-z_$][\\w$]*)`
 	));
@@ -698,10 +698,10 @@ async function runCode(code, source, functionCallLocations, declarationBlockRang
 {
 	// One-line prelude so declarationBlockRanges' line offset (linesBefore + 2)
 	// stays correct. The storage var is randomized; the export-as alias keeps
-	// `module.__plectaOutput` resolving for the host-side read below.
-	const body = `const ${storageName} = {}; export { ${storageName} as __plectaOutput };
+	// `module.__spruceOutput` resolving for the host-side read below.
+	const body = `const ${storageName} = {}; export { ${storageName} as __spruceOutput };
 ${code}`;
-	if (process.env.PLECTA_DEBUG_BODY) console.error("---BODY---\n" + body + "\n---END---");
+	if (process.env.SPRUCE_DEBUG_BODY) console.error("---BODY---\n" + body + "\n---END---");
 
 	const url = URL.createObjectURL(new Blob([body], { type: "text/javascript" }));
 
@@ -715,7 +715,7 @@ ${code}`;
 		const module = await import(pathToFileURL(path).href);
 		await unlink(path).catch(() => {});
 		pendingCleanup.delete(path);
-		return module.__plectaOutput;
+		return module.__spruceOutput;
 	}
 
 	catch(ex)
@@ -750,11 +750,11 @@ export async function compile(input, outputFormat)
 		}
 	}
 
-	const desugared = desugar(plecta.match(input));
-	const desugaredMatch = plecta.match(desugared);
+	const desugared = desugar(spruce.match(input));
+	const desugaredMatch = spruce.match(desugared);
 	const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
-	const __plectaOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
-	let result = insertCodeOutput(desugaredMatch, __plectaOutput);
+	const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
+	let result = insertCodeOutput(desugaredMatch, __spruceOutput);
 
 	const formatStdlib = stdlib[outputFormat];
 	if (formatStdlib)
@@ -795,7 +795,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 
 	if (!inputPath || !outputPath)
 	{
-		process.stderr.write("usage: plecta <input> <output> [-f|--format <format>]\n");
+		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>]\n");
 		process.exit(1);
 	}
 
