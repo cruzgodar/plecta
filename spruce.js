@@ -738,37 +738,69 @@ process.on("SIGINT", () => process.exit(130))
 
 
 
-export async function compile(input, outputFormat)
+// Serialize compile() calls. desugar/getCode share module-level state across
+// await boundaries; the globalThis snapshot below also needs single-owner
+// access. Chaining keeps the public API a plain async function.
+let compileQueue = Promise.resolve();
+
+export function compile(input, outputFormat)
 {
+	const next = compileQueue.then(() => _compileImpl(input, outputFormat));
+	compileQueue = next.catch(() => {});
+	return next;
+}
+
+async function _compileImpl(input, outputFormat)
+{
+	// Snapshot the keys we're about to splat so we can restore on the way out.
+	// Users still override behavior by declaring/importing the name in their
+	// document — that shadows globalThis during the generated module's
+	// execution exactly as before — but after compile() returns the host's
+	// globalThis is unchanged.
+	const snapshot = [];
 	if (Object.hasOwn(stdlib, outputFormat))
 	{
 		for (const [key, value] of Object.entries(stdlib[outputFormat]))
 		{
 			if (POST_COMPILE_HOOKS.includes(key)) continue;
+			snapshot.push(Object.hasOwn(globalThis, key)
+				? { key, had: true, value: globalThis[key] }
+				: { key, had: false });
 			globalThis[key] = value;
 		}
 	}
 
-	const desugared = desugar(spruce.match(input));
-	const desugaredMatch = spruce.match(desugared);
-	const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
-	const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
-	let result = insertCodeOutput(desugaredMatch, __spruceOutput);
-
-	const formatStdlib = stdlib[outputFormat];
-	if (formatStdlib)
+	try
 	{
-		for (const name of POST_COMPILE_HOOKS)
+		const desugared = desugar(spruce.match(input));
+		const desugaredMatch = spruce.match(desugared);
+		const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
+		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
+		let result = insertCodeOutput(desugaredMatch, __spruceOutput);
+
+		const formatStdlib = stdlib[outputFormat];
+		if (formatStdlib)
 		{
-			const hook = formatStdlib[name];
-			if (typeof hook === "function")
+			for (const name of POST_COMPILE_HOOKS)
 			{
-				result = hook(result);
+				const hook = formatStdlib[name];
+				if (typeof hook === "function")
+				{
+					result = hook(result);
+				}
 			}
 		}
-	}
 
-	return result;
+		return result;
+	}
+	finally
+	{
+		for (const entry of snapshot)
+		{
+			if (entry.had) globalThis[entry.key] = entry.value;
+			else delete globalThis[entry.key];
+		}
+	}
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)

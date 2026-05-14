@@ -119,7 +119,7 @@ ${body}
 
 	heading(headingNumber, body)
 	{
-		const commands = ["chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
+		const commands = ["section", "subsection", "subsubsection", "paragraph", "subparagraph", "subparagraph"];
 		return `\\${commands[headingNumber - 1]}{${body}}`;
 	},
 

@@ -497,3 +497,63 @@ test("document hook: hook is not callable inline as @document[...]", async (t) =
 		delete stdlib.html.document;
 	}
 });
+
+
+// ============================================================================
+// Isolation: serialization and globalThis hygiene
+// ============================================================================
+
+test("isolation: concurrent compiles do not corrupt each other", async () =>
+{
+	// Run several compiles that overlap on the await inside runCode. Without
+	// serialization, desugar()/getCode()'s module-level state gets stomped
+	// across awaits and outputs cross-contaminate.
+	const [a, b, c] = await Promise.all([
+		compile("# A", "html"),
+		compile("# B", "tex"),
+		compile("# C", "html"),
+	]);
+	assert.match(a, /<h1>A<\/h1>/);
+	assert.match(b, /\\chapter\{B\}/);
+	assert.match(c, /<h1>C<\/h1>/);
+	// And the formats must not have cross-contaminated.
+	assert.doesNotMatch(a, /\\chapter/);
+	assert.doesNotMatch(b, /<h1>/);
+});
+
+test("isolation: compile does not leak stdlib onto globalThis", async () =>
+{
+	const sentinelKey = "heading"; // present in both html and tex stdlib
+	const hadBefore = Object.hasOwn(globalThis, sentinelKey);
+	const valueBefore = hadBefore ? globalThis[sentinelKey] : undefined;
+
+	await compile("# X", "html");
+
+	assert.equal(Object.hasOwn(globalThis, sentinelKey), hadBefore);
+	if (hadBefore) assert.equal(globalThis[sentinelKey], valueBefore);
+});
+
+test("isolation: pre-existing globalThis entry is restored after compile", async () =>
+{
+	const sentinel = Symbol("preexisting");
+	const had = Object.hasOwn(globalThis, "bold");
+	const prior = had ? globalThis.bold : undefined;
+
+	globalThis.bold = sentinel;
+	try
+	{
+		await compile("**x**", "html");
+		assert.equal(globalThis.bold, sentinel);
+	}
+	finally
+	{
+		if (had) globalThis.bold = prior;
+		else delete globalThis.bold;
+	}
+});
+
+test("isolation: user declaration block still overrides the stdlib name", async () =>
+{
+	const src = `@@@html\nfunction heading(n, body) { return "OVERRIDE:" + body; }\n@@@\n# X`;
+	assert.equal(await compile(src, "html"), NL + "OVERRIDE:X");
+});
