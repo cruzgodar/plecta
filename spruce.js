@@ -18,7 +18,7 @@ const bt = "`";
 // matching function on the format's stdlib entry.
 const POST_COMPILE_HOOKS = ["document"];
 
-const grammar = String.raw`
+export const grammar = String.raw`
 spruce {
   document = chunk*
   
@@ -160,7 +160,7 @@ spruce {
 
 
 
-const spruce = ohm.grammar(grammar);
+export const spruce = ohm.grammar(grammar);
 
 const semantics = spruce.createSemantics();
 

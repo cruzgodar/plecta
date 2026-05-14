@@ -1,0 +1,31 @@
+{
+  "name": "spruce-language",
+  "displayName": "Spruce Language",
+  "description": "Syntax highlighting for the Spruce markup language via LSP semantic tokens",
+  "version": "0.0.1",
+  "publisher": "cruzgodar",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "main": "./client/extension.js",
+  "activationEvents": ["onLanguage:spruce"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "spruce",
+        "aliases": ["Spruce", "spruce"],
+        "extensions": [".sp"],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node --test server/tokenizer.test.mjs"
+  },
+  "dependencies": {
+    "ohm-js": "^17.5.0",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  }
+}
