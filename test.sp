@@ -5,7 +5,8 @@
 code
 ```
 $$
-math
+math \begin{align}
+\end{align}
 $$
 
 @@@html
@@ -31,4 +32,4 @@ Paragraph with *italic*, **bold**, ***bolditalic***,
 `code`, $math$, $$displaystyle math$$, [link](to somewhere),
 and escaped characters: @@x @*c@*
 
-@center[centered text!]
+@center[centered text!]{raw}

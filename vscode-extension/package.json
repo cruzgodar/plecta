@@ -8,7 +8,6 @@
     "vscode": "^1.75.0"
   },
   "main": "./client/extension.js",
-  "activationEvents": ["onLanguage:spruce"],
   "contributes": {
     "languages": [
       {
@@ -17,7 +16,51 @@
         "extensions": [".sp"],
         "configuration": "./language-configuration.json"
       }
-    ]
+    ],
+    "grammars": [
+      {
+        "language": "spruce",
+        "scopeName": "source.spruce",
+        "path": "./syntaxes/spruce.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.js": "javascript",
+          "meta.math.block.latex": "latex",
+          "meta.math.inline.latex": "latex"
+        }
+      }
+    ],
+    "semanticTokenTypes": [
+      { "id": "heading", "description": "Markdown-style heading line" },
+      { "id": "bold", "description": "Bold span" },
+      { "id": "italic", "description": "Italic span" },
+      { "id": "boldItalic", "description": "Bold + italic span" },
+      { "id": "inlineCode", "description": "Inline `code` span" },
+      { "id": "codeBlock", "description": "Fenced code block" },
+      { "id": "list", "description": "List marker (- or 1.)" },
+      { "id": "function", "description": "@function call marker and name" }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "spruce",
+        "scopes": {
+          "heading": ["markup.heading"],
+          "inlineCode": ["markup.inline.raw"],
+          "codeBlock": ["markup.raw"],
+          "list": ["markup.list"],
+          "function": ["keyword"]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "editor.semanticTokenColorCustomizations": {
+        "enabled": true,
+        "rules": {
+          "bold:spruce": { "bold": true },
+          "italic:spruce": { "italic": true },
+          "boldItalic:spruce": { "bold": true, "italic": true }
+        }
+      }
+    }
   },
   "scripts": {
     "test": "node --test server/tokenizer.test.mjs"

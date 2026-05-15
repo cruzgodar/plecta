@@ -1,77 +1,61 @@
 import { spruce } from "../../spruce.js";
 
 export const TOKEN_TYPES = [
-	"keyword",
-	"string",
-	"number",
-	"macro",
-	"parameter",
+	"heading",
+	"bold",
+	"italic",
+	"boldItalic",
+	"inlineCode",
+	"codeBlock",
+	"list",
 	"function",
+	"string",
 	"operator",
-	"decorator",
 	"namespace",
-	"variable",
 ];
 
 export const TOKEN_MODIFIERS = [];
 
 const typeIndex = Object.fromEntries(TOKEN_TYPES.map((t, i) => [t, i]));
 
-// Rule handlers. Each returns true if it fully handled the node (no further
-// recursion); false/undefined to fall through to default child recursion.
+// Rule handlers. Returning true means "fully handled, don't recurse into children";
+// returning undefined falls through to recursing into all children.
 const handlers = {
-	headingHashes(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "keyword");
+	heading(node, t) {
+		emit(t, node.source.startIdx, node.source.endIdx, "heading");
 		return true;
 	},
 
 	bold(node, t) {
-		const s = node.source.startIdx, e = node.source.endIdx;
-		emit(t, s, s + 2, "macro");
-		emit(t, e - 2, e, "macro");
+		emit(t, node.source.startIdx, node.source.endIdx, "bold");
+		return true;
 	},
 
 	italic(node, t) {
-		const s = node.source.startIdx, e = node.source.endIdx;
-		emit(t, s, s + 1, "parameter");
-		emit(t, e - 1, e, "parameter");
+		emit(t, node.source.startIdx, node.source.endIdx, "italic");
+		return true;
 	},
 
 	boldItalic(node, t) {
-		const s = node.source.startIdx, e = node.source.endIdx;
-		emit(t, s, s + 3, "macro");
-		emit(t, e - 3, e, "macro");
+		emit(t, node.source.startIdx, node.source.endIdx, "boldItalic");
+		return true;
 	},
 
 	code(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "string");
+		emit(t, node.source.startIdx, node.source.endIdx, "inlineCode");
 		return true;
 	},
 
 	codeBlock(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "string");
+		emit(t, node.source.startIdx, node.source.endIdx, "codeBlock");
 		return true;
 	},
 
-	math(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "number");
-		return true;
-	},
-
-	inlineDisplayMath(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "number");
-		return true;
-	},
-
-	displayMath(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "number");
-		return true;
-	},
-
-	declarationBlock(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "decorator");
-		return true;
-	},
+	// Embedded grammars in the TextMate file handle these — no LSP tokens.
+	math(_node, _t) { return true; },
+	inlineDisplayMath(_node, _t) { return true; },
+	displayMath(_node, _t) { return true; },
+	declarationBlock(_node, _t) { return true; },
 
 	link(node, t) {
 		const text = node.source.contents;
@@ -86,16 +70,16 @@ const handlers = {
 	},
 
 	functionCall_wrapped(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "operator");
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "function");
 	},
 	functionCall_bare(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "operator");
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "function");
 	},
 	functionCall_raw(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "operator");
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "function");
 	},
 	functionCall_escaped(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "operator");
+		emit(t, node.source.startIdx, node.source.endIdx, "function");
 		return true;
 	},
 
@@ -104,12 +88,32 @@ const handlers = {
 		return true;
 	},
 
+	// Raw blocks: the content is a string, EXCEPT for nested function calls,
+	// which keep their own coloring. We let children emit their tokens first
+	// (so nested @funcs render as functions), then fill the gaps with `string`.
+	rawBlock(node, t) {
+		const inner = [];
+		for (const child of node.children) child.collect(inner);
+		inner.sort((a, b) => a.start - b.start);
+
+		const start = node.source.startIdx;
+		const end = node.source.endIdx;
+		let cursor = start;
+		for (const tok of inner) {
+			if (tok.start > cursor) emit(t, cursor, tok.start, "string");
+			if (tok.end > cursor) cursor = tok.end;
+		}
+		if (cursor < end) emit(t, cursor, end, "string");
+		for (const tok of inner) t.push(tok);
+		return true;
+	},
+
 	orderedItemStarter_numeric(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "keyword");
+		emit(t, node.source.startIdx, node.source.endIdx, "list");
 		return true;
 	},
 	orderedItemStarter_plus(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "keyword");
+		emit(t, node.source.startIdx, node.source.endIdx, "list");
 		return true;
 	},
 
@@ -117,7 +121,7 @@ const handlers = {
 		const offset = node.source.contents.indexOf("-");
 		if (offset >= 0) {
 			const s = node.source.startIdx + offset;
-			emit(t, s, s + 1, "keyword");
+			emit(t, s, s + 1, "list");
 		}
 	},
 };
