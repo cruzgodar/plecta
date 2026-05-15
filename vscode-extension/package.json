@@ -31,21 +31,22 @@
     ],
     "semanticTokenTypes": [
       { "id": "heading", "description": "Markdown-style heading line" },
-      { "id": "bold", "description": "Bold span" },
-      { "id": "italic", "description": "Italic span" },
-      { "id": "boldItalic", "description": "Bold + italic span" },
-      { "id": "inlineCode", "description": "Inline `code` span" },
-      { "id": "codeBlock", "description": "Fenced code block" },
+      { "id": "bold", "description": "Bold span content" },
+      { "id": "italic", "description": "Italic span content" },
+      { "id": "boldItalic", "description": "Bold + italic span content" },
+      { "id": "inlineCode", "description": "Inline `code` content" },
+      { "id": "codeBlock", "description": "Fenced code block content" },
       { "id": "list", "description": "List marker (- or 1.)" },
-      { "id": "function", "description": "@function call marker and name" }
+      { "id": "function", "description": "@function call marker and name" },
+      { "id": "marker", "description": "Inline syntax delimiter (backticks, asterisks, underscores)" }
     ],
     "semanticTokenScopes": [
       {
         "language": "spruce",
         "scopes": {
           "heading": ["markup.heading"],
-          "inlineCode": ["markup.inline.raw"],
-          "codeBlock": ["markup.raw"],
+          "inlineCode": ["variable"],
+          "codeBlock": ["variable"],
           "list": ["markup.list"],
           "function": ["keyword"]
         }
@@ -57,8 +58,17 @@
         "rules": {
           "bold:spruce": { "bold": true },
           "italic:spruce": { "italic": true },
-          "boldItalic:spruce": { "bold": true, "italic": true }
+          "boldItalic:spruce": { "bold": true, "italic": true },
+          "marker:spruce": { "foreground": "#80808080" }
         }
+      },
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          {
+            "scope": "comment.delimiter.math",
+            "settings": { "foreground": "#80808080" }
+          }
+        ]
       }
     }
   },

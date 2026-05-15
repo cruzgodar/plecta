@@ -12,6 +12,7 @@ export const TOKEN_TYPES = [
 	"string",
 	"operator",
 	"namespace",
+	"marker",
 ];
 
 export const TOKEN_MODIFIERS = [];
@@ -27,27 +28,37 @@ const handlers = {
 	},
 
 	bold(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "bold");
+		emitMarkered(t, node, 2, "bold");
 		return true;
 	},
 
 	italic(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "italic");
+		emitMarkered(t, node, 1, "italic");
 		return true;
 	},
 
 	boldItalic(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "boldItalic");
+		emitMarkered(t, node, 3, "boldItalic");
 		return true;
 	},
 
 	code(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "inlineCode");
+		emitMarkered(t, node, 1, "inlineCode");
 		return true;
 	},
 
 	codeBlock(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "codeBlock");
+		const text = node.source.contents;
+		const s = node.source.startIdx;
+		const openIdx = text.indexOf("```");
+		const closeIdx = text.lastIndexOf("```");
+		if (openIdx < 0 || closeIdx <= openIdx) {
+			emit(t, s, node.source.endIdx, "codeBlock");
+			return true;
+		}
+		emit(t, s + openIdx, s + openIdx + 3, "marker");
+		emit(t, s + openIdx + 3, s + closeIdx, "codeBlock");
+		emit(t, s + closeIdx, s + closeIdx + 3, "marker");
 		return true;
 	},
 
@@ -128,6 +139,16 @@ const handlers = {
 
 function emit(tokens, start, end, type) {
 	if (end > start) tokens.push({ start, end, type });
+}
+
+// Emit a `marker` token for the first/last `markerLen` chars of `node` and
+// a `contentType` token for everything in between.
+function emitMarkered(tokens, node, markerLen, contentType) {
+	const s = node.source.startIdx;
+	const e = node.source.endIdx;
+	emit(tokens, s, s + markerLen, "marker");
+	emit(tokens, s + markerLen, e - markerLen, contentType);
+	emit(tokens, e - markerLen, e, "marker");
 }
 
 const semantics = spruce.createSemantics();

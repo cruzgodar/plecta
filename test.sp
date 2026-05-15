@@ -28,7 +28,7 @@ $$
 1. ordered
 +  list
 
-Paragraph with *italic*, **bold**, ***bolditalic***,
+Paragraph with *italic*, **bold**, ***bolditalic*** 
 `code`, $math$, $$displaystyle math$$, [link](to somewhere),
 and escaped characters: @@x @*c@*
 

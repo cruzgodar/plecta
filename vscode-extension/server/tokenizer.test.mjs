@@ -11,34 +11,49 @@ test("heading line emits a single heading token over the whole line", () => {
 	assert.equal(heading.end, 7);
 });
 
-test("bold span emits a single bold token covering the whole span", () => {
+test("bold splits into marker + bold + marker", () => {
 	const tokens = collectTokens("**hi**");
-	const bold = tokens.filter(t => t.type === "bold");
-	assert.equal(bold.length, 1);
-	assert.equal(bold[0].start, 0);
-	assert.equal(bold[0].end, 6);
+	const markers = tokens.filter(t => t.type === "marker");
+	const bold = tokens.find(t => t.type === "bold");
+	assert.equal(markers.length, 2);
+	assert.equal(markers[0].start, 0); assert.equal(markers[0].end, 2);
+	assert.equal(markers[1].start, 4); assert.equal(markers[1].end, 6);
+	assert.equal(bold.start, 2); assert.equal(bold.end, 4);
 });
 
-test("italic span emits a single italic token", () => {
+test("italic splits into marker + italic + marker (1-char markers)", () => {
 	const tokens = collectTokens("*hi*");
+	const markers = tokens.filter(t => t.type === "marker");
 	const it = tokens.find(t => t.type === "italic");
-	assert.ok(it);
-	assert.equal(it.start, 0);
-	assert.equal(it.end, 4);
+	assert.equal(markers.length, 2);
+	assert.equal(markers[0].end - markers[0].start, 1);
+	assert.equal(it.start, 1); assert.equal(it.end, 3);
 });
 
-test("***bold italic*** emits a boldItalic token", () => {
+test("***boldItalic*** has 3-char markers and inner boldItalic", () => {
 	const tokens = collectTokens("***hi***");
-	const bi = tokens.find(t => t.type === "boldItalic");
-	assert.ok(bi);
+	const markers = tokens.filter(t => t.type === "marker");
+	assert.equal(markers.length, 2);
+	assert.equal(markers[0].end - markers[0].start, 3);
+	assert.ok(tokens.find(t => t.type === "boldItalic"));
 });
 
-test("inline `code` emits inlineCode, codeBlock emits codeBlock", () => {
-	const inline = collectTokens("`x`");
-	assert.ok(inline.find(t => t.type === "inlineCode"));
+test("inline `code` splits backticks + content", () => {
+	const tokens = collectTokens("`x`");
+	const markers = tokens.filter(t => t.type === "marker");
+	const code = tokens.find(t => t.type === "inlineCode");
+	assert.equal(markers.length, 2);
+	assert.equal(code.start, 1); assert.equal(code.end, 2);
+});
 
-	const block = collectTokens("```\nfoo\n```\n");
-	assert.ok(block.find(t => t.type === "codeBlock"));
+test("fenced ``` ... ``` block splits triple-backticks + body", () => {
+	const tokens = collectTokens("```\nfoo\n```\n");
+	const markers = tokens.filter(t => t.type === "marker");
+	const body = tokens.find(t => t.type === "codeBlock");
+	assert.equal(markers.length, 2);
+	assert.equal(markers[0].end - markers[0].start, 3);
+	assert.equal(markers[1].end - markers[1].start, 3);
+	assert.ok(body);
 });
 
 test("@name[body] colors @ and name as function, body recurses", () => {

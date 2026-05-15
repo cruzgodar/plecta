@@ -31,10 +31,10 @@
 			"begin": "^[ \\t]*(\\$\\$)[ \\t]*$",
 			"end": "^[ \\t]*(\\$\\$)[ \\t]*$",
 			"beginCaptures": {
-				"1": { "name": "punctuation.definition.math.begin.spruce" }
+				"1": { "name": "comment.delimiter.math.begin.spruce" }
 			},
 			"endCaptures": {
-				"1": { "name": "punctuation.definition.math.end.spruce" }
+				"1": { "name": "comment.delimiter.math.end.spruce" }
 			},
 			"contentName": "meta.math.block.latex",
 			"patterns": [{ "include": "text.tex.latex" }]
@@ -44,10 +44,10 @@
 			"begin": "\\$\\$",
 			"end": "\\$\\$",
 			"beginCaptures": {
-				"0": { "name": "punctuation.definition.math.begin.spruce" }
+				"0": { "name": "comment.delimiter.math.begin.spruce" }
 			},
 			"endCaptures": {
-				"0": { "name": "punctuation.definition.math.end.spruce" }
+				"0": { "name": "comment.delimiter.math.end.spruce" }
 			},
 			"contentName": "meta.math.inline.latex",
 			"patterns": [{ "include": "text.tex.latex" }]
@@ -57,10 +57,10 @@
 			"begin": "\\$(?!\\$)",
 			"end": "\\$",
 			"beginCaptures": {
-				"0": { "name": "punctuation.definition.math.begin.spruce" }
+				"0": { "name": "comment.delimiter.math.begin.spruce" }
 			},
 			"endCaptures": {
-				"0": { "name": "punctuation.definition.math.end.spruce" }
+				"0": { "name": "comment.delimiter.math.end.spruce" }
 			},
 			"contentName": "meta.math.inline.latex",
 			"patterns": [{ "include": "text.tex.latex" }]
