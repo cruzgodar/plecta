@@ -30,6 +30,7 @@ spruce {
     | unorderedList
     | orderedList
     | newline          // Needs to be above paragraph or else newlines will always lead to paragraphs
+    | functionCallChunk
     | paragraph
   
   
@@ -127,10 +128,12 @@ spruce {
   spaceOrTab = " " | "\t"
   
   
+
+  functionCallChunk = spaceOrTab* functionCall spaceOrTab* (newline | end)
   
   functionCall
-    = "@" spaceOrTab* "(" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
-    | "@" spaceOrTab* jsIdentifier spacePaddedBlock*                       --bare
+    = "(" spaceOrTab* "@" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
+    | "@" spaceOrTab* jsIdentifier spaceOrTabPaddedBlock*                  --bare
     | "@" spaceOrTab* rawBlock                                             --raw
     | "@" (~space any)                                                     --escaped
     | "@" space                                                            --invalid
@@ -140,6 +143,7 @@ spruce {
   jsIdentifierPart = jsIdentifierStart | digit
   
   spacePaddedBlock = space* parsedOrRawBlock
+  spaceOrTabPaddedBlock = spaceOrTab* parsedOrRawBlock
   parsedOrRawBlock = parsedBlock | rawBlock
 
   parsedBlock
@@ -282,18 +286,18 @@ semantics.addOperation("desugar", {
 		return `@(inlineDisplayMath{${body.desugar()}})`;
 	},
 
-
+	
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
 		captureFunctionCall(this);
-		return `@(${name.desugar()}${spacePaddedBlocks.desugar()})`;
+		return `(@${name.desugar()}${spacePaddedBlocks.desugar()})`;
 	},
 
-	functionCall_bare(_1, _2, name, spacePaddedBlocks)
+	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
 	{
 		captureFunctionCall(this);
-		return `@${name.desugar()}${spacePaddedBlocks.desugar()}`;
+		return `@${name.desugar()}${spaceOrTabPaddedBlocks.desugar()}`;
 	},
 
 	functionCall_raw(_1, _2, block)
@@ -326,6 +330,11 @@ semantics.addOperation("desugar", {
 	},
 
 	spacePaddedBlock(_1, block)
+	{
+		return block.desugar();
+	},
+
+	spaceOrTabPaddedBlock(_1, block)
 	{
 		return block.desugar();
 	},
@@ -453,20 +462,20 @@ semantics.addOperation("getCode", {
 		return "${" + storageName + "[" + id + "]}";
 	},
 
-	functionCall_bare(_1, _2, name, spacePaddedBlocks)
+	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
 	{
 		const startIdx = this.source.startIdx;
 		const id = JSON.stringify(startIdx);
 
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
-		const functionArguments = spacePaddedBlocks.children
+		const functionArguments = spaceOrTabPaddedBlocks.children
 			.map(block => "`" + block.getCode() + "`")
 			.join(",");
 
 		const nameCode = name.getCode();
 
-		const rhs = spacePaddedBlocks.children.length > 0
+		const rhs = spaceOrTabPaddedBlocks.children.length > 0
 			? `${nameCode}(${functionArguments})`
 			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
 
@@ -537,7 +546,7 @@ semantics.addOperation("insertCodeOutput(__spruceOutput)", {
 		return this.args.__spruceOutput[id];
 	},
 
-	functionCall_bare(_1, _2, name, spacePaddedBlocks)
+	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
 	{
 		const id = JSON.stringify(this.source.startIdx);
 		return this.args.__spruceOutput[id];
