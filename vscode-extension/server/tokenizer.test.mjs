@@ -38,38 +38,84 @@ test("***boldItalic*** has 3-char markers and inner boldItalic", () => {
 	assert.ok(tokens.find(t => t.type === "boldItalic"));
 });
 
-test("inline `code` splits backticks + content", () => {
+test("inline `code` splits backticks + content (backticks are string)", () => {
 	const tokens = collectTokens("`x`");
-	const markers = tokens.filter(t => t.type === "marker");
+	const strings = tokens.filter(t => t.type === "string");
 	const code = tokens.find(t => t.type === "inlineCode");
-	assert.equal(markers.length, 2);
+	assert.equal(strings.length, 2);
+	assert.equal(strings[0].start, 0); assert.equal(strings[0].end, 1);
+	assert.equal(strings[1].start, 2); assert.equal(strings[1].end, 3);
 	assert.equal(code.start, 1); assert.equal(code.end, 2);
 });
 
 test("fenced ``` ... ``` block splits triple-backticks + body", () => {
 	const tokens = collectTokens("```\nfoo\n```\n");
-	const markers = tokens.filter(t => t.type === "marker");
+	const fences = tokens.filter(t => t.type === "string");
 	const body = tokens.find(t => t.type === "codeBlock");
-	assert.equal(markers.length, 2);
-	assert.equal(markers[0].end - markers[0].start, 3);
-	assert.equal(markers[1].end - markers[1].start, 3);
+	assert.equal(fences.length, 2);
+	assert.equal(fences[0].end - fences[0].start, 3);
+	assert.equal(fences[1].end - fences[1].start, 3);
 	assert.ok(body);
 });
 
-test("@name[body] colors @ and name as function, body recurses", () => {
+test("``` block with language tag emits a languageTag token", () => {
+	const tokens = collectTokens("```js\nfoo\n```\n");
+	const lang = tokens.find(t => t.type === "languageTag");
+	assert.ok(lang);
+	assert.equal(lang.end - lang.start, 2);
+});
+
+test("inline $math$ delimiters are string-colored", () => {
+	const src = "$x$";
+	const tokens = collectTokens(src);
+	const strings = tokens.filter(t => t.type === "string");
+	assert.ok(strings.find(t => t.start === 0 && t.end === 1));
+	assert.ok(strings.find(t => t.start === 2 && t.end === 3));
+});
+
+test("@name[body] colors @ and name as spruceFunction, body recurses", () => {
 	const tokens = collectTokens("@name[body]");
-	const fns = tokens.filter(t => t.type === "function");
+	const fns = tokens.filter(t => t.type === "spruceFunction");
 	// One for the @, one for the identifier `name`.
 	assert.ok(fns.length >= 2);
 	assert.equal(fns[0].start, 0);
 	assert.equal(fns[0].end, 1);
 });
 
+test("wrapped (@name[body]) colors @ and name as spruceFunction", () => {
+	const src = "(@name[body])";
+	const tokens = collectTokens(src);
+	const fns = tokens.filter(t => t.type === "spruceFunction");
+	// At least one for the @ and one for the identifier `name`.
+	assert.ok(fns.length >= 2);
+	const atTok = fns.find(t => t.start === src.indexOf("@"));
+	assert.ok(atTok, "expected a token starting at the @ position");
+	assert.equal(atTok.end - atTok.start, 1);
+});
+
+test("link URL is highlighted as string", () => {
+	const tokens = collectTokens("[text](https://example.com)");
+	const strings = tokens.filter(t => t.type === "string");
+	assert.ok(strings.find(t => t.start === 7 && t.end === 26));
+});
+
+test("escaped @x emits keyword @ and string escaped char", () => {
+	const src = "a @] b";
+	const tokens = collectTokens(src);
+	const atIdx = src.indexOf("@");
+	const fn = tokens.find(t => t.type === "spruceFunction" && t.start === atIdx);
+	assert.ok(fn);
+	assert.equal(fn.end, atIdx + 1);
+	const str = tokens.find(t => t.type === "string" && t.start === atIdx + 1);
+	assert.ok(str);
+	assert.equal(str.end, atIdx + 2);
+});
+
 test("raw block content is string, with function-call gaps preserved", () => {
 	// @outer{ raw stuff @inner[x] more } — outer is functionCall_raw.
 	const tokens = collectTokens("@outer{ raw @inner[x] more }");
 	const strings = tokens.filter(t => t.type === "string");
-	const fns = tokens.filter(t => t.type === "function");
+	const fns = tokens.filter(t => t.type === "spruceFunction");
 	assert.ok(strings.length >= 1, "expected at least one string token in raw block");
 	// The inner @ and identifier should still emit function tokens.
 	assert.ok(fns.find(t => t.start > 6 && t.end <= 20), "expected inner function tokens preserved");

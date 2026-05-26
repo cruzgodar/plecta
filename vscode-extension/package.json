@@ -37,8 +37,9 @@
       { "id": "inlineCode", "description": "Inline `code` content" },
       { "id": "codeBlock", "description": "Fenced code block content" },
       { "id": "list", "description": "List marker (- or 1.)" },
-      { "id": "function", "description": "@function call marker and name" },
-      { "id": "marker", "description": "Inline syntax delimiter (backticks, asterisks, underscores)" }
+      { "id": "spruceFunction", "description": "@function call marker and name" },
+      { "id": "marker", "description": "Inline syntax delimiter (asterisks, underscores)" },
+      { "id": "languageTag", "description": "Language identifier after a ``` fence" }
     ],
     "semanticTokenScopes": [
       {
@@ -47,8 +48,10 @@
           "heading": ["markup.heading"],
           "inlineCode": ["variable"],
           "codeBlock": ["variable"],
-          "list": ["markup.list"],
-          "function": ["keyword"]
+          "string": ["variable"],
+          "list": ["markup.heading"],
+          "spruceFunction": ["keyword.control"],
+          "languageTag": ["entity.name.type"]
         }
       }
     ],
@@ -59,16 +62,8 @@
           "bold:spruce": { "bold": true },
           "italic:spruce": { "italic": true },
           "boldItalic:spruce": { "bold": true, "italic": true },
-          "marker:spruce": { "foreground": "#80808080" }
+          "marker:spruce": { "foreground": "#808080BF" }
         }
-      },
-      "editor.tokenColorCustomizations": {
-        "textMateRules": [
-          {
-            "scope": "comment.delimiter.math",
-            "settings": { "foreground": "#80808080" }
-          }
-        ]
       }
     }
   },

@@ -8,11 +8,12 @@ export const TOKEN_TYPES = [
 	"inlineCode",
 	"codeBlock",
 	"list",
-	"function",
+	"spruceFunction",
 	"string",
 	"operator",
 	"namespace",
 	"marker",
+	"languageTag",
 ];
 
 export const TOKEN_MODIFIERS = [];
@@ -43,7 +44,13 @@ const handlers = {
 	},
 
 	code(node, t) {
-		emitMarkered(t, node, 1, "inlineCode");
+		// Backticks share the light-blue raw color (string), not the gray
+		// marker color used for *_ delimiters.
+		const s = node.source.startIdx;
+		const e = node.source.endIdx;
+		emit(t, s, s + 1, "string");
+		emit(t, s + 1, e - 1, "inlineCode");
+		emit(t, e - 1, e, "string");
 		return true;
 	},
 
@@ -56,16 +63,47 @@ const handlers = {
 			emit(t, s, node.source.endIdx, "codeBlock");
 			return true;
 		}
-		emit(t, s + openIdx, s + openIdx + 3, "marker");
-		emit(t, s + openIdx + 3, s + closeIdx, "codeBlock");
-		emit(t, s + closeIdx, s + closeIdx + 3, "marker");
+		// Find the optional language tag: alnum* after ``` and optional whitespace.
+		let i = openIdx + 3;
+		while (text[i] === " " || text[i] === "\t") i++;
+		const langStart = i;
+		while (i < text.length && /[A-Za-z0-9]/.test(text[i])) i++;
+		const langEnd = i;
+
+		emit(t, s + openIdx, s + openIdx + 3, "string");
+		if (langEnd > langStart) emit(t, s + langStart, s + langEnd, "languageTag");
+		emit(t, s + langEnd, s + closeIdx, "codeBlock");
+		emit(t, s + closeIdx, s + closeIdx + 3, "string");
 		return true;
 	},
 
-	// Embedded grammars in the TextMate file handle these — no LSP tokens.
-	math(_node, _t) { return true; },
-	inlineDisplayMath(_node, _t) { return true; },
-	displayMath(_node, _t) { return true; },
+	// Math content is handled by the embedded LaTeX TextMate grammar, but we
+	// still emit semantic tokens for the $ / $$ delimiters so they pick up the
+	// light-blue raw color (overriding the gray TextMate fallback).
+	math(node, t) {
+		const s = node.source.startIdx;
+		const e = node.source.endIdx;
+		emit(t, s, s + 1, "string");
+		emit(t, e - 1, e, "string");
+		return true;
+	},
+	inlineDisplayMath(node, t) {
+		const s = node.source.startIdx;
+		const e = node.source.endIdx;
+		emit(t, s, s + 2, "string");
+		emit(t, e - 2, e, "string");
+		return true;
+	},
+	displayMath(node, t) {
+		const text = node.source.contents;
+		const s = node.source.startIdx;
+		const openIdx = text.indexOf("$$");
+		const closeIdx = text.lastIndexOf("$$");
+		if (openIdx < 0 || closeIdx <= openIdx) return true;
+		emit(t, s + openIdx, s + openIdx + 2, "string");
+		emit(t, s + closeIdx, s + closeIdx + 2, "string");
+		return true;
+	},
 	declarationBlock(_node, _t) { return true; },
 
 	link(node, t) {
@@ -77,25 +115,33 @@ const handlers = {
 		emit(t, s, s + 1, "operator");
 		emit(t, s + closeBracket, s + closeBracket + 2, "operator");
 		emit(t, e - 1, e, "operator");
-		emit(t, s + closeBracket + 2, e - 1, "namespace");
+		emit(t, s + closeBracket + 2, e - 1, "string");
 	},
 
 	functionCall_wrapped(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "function");
+		const atOffset = node.source.contents.indexOf("@");
+		if (atOffset < 0) return;
+		const s = node.source.startIdx + atOffset;
+		emit(t, s, s + 1, "spruceFunction");
 	},
 	functionCall_bare(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "function");
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 	},
 	functionCall_raw(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "function");
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 	},
+	// Escape sequences (@] @} @@ etc.): the @ is a keyword like any other
+	// single @, and the escaped character renders as raw (string).
 	functionCall_escaped(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "function");
+		const s = node.source.startIdx;
+		const e = node.source.endIdx;
+		emit(t, s, s + 1, "spruceFunction");
+		emit(t, s + 1, e, "string");
 		return true;
 	},
 
 	jsIdentifier(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "function");
+		emit(t, node.source.startIdx, node.source.endIdx, "spruceFunction");
 		return true;
 	},
 
