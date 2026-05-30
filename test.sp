@@ -41,10 +41,10 @@ This is its own paragraph:
 
 @f[parsed block]
 
-@f[[
+@f#[[
 	entire paragraph
 
 	1. hello
 	2. also
 	3. three
-]]
+]]#

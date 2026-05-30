@@ -1,4 +1,4 @@
-import { spruce } from "../../spruce.js";
+import { grammarFor } from "../../spruce.js";
 
 export const TOKEN_TYPES = [
 	"heading",
@@ -197,9 +197,7 @@ function emitMarkered(tokens, node, markerLen, contentType) {
 	emit(tokens, e - markerLen, e, "marker");
 }
 
-const semantics = spruce.createSemantics();
-
-semantics.addOperation("collect(tokens)", {
+const collectOperation = {
 	_terminal() {},
 	_iter(...children) {
 		for (const c of children) c.collect(this.args.tokens);
@@ -210,13 +208,28 @@ semantics.addOperation("collect(tokens)", {
 		if (stop) return;
 		for (const c of children) c.collect(this.args.tokens);
 	},
-});
+};
+
+// The grammar is built on demand per input (its hash depth varies), so cache one
+// semantics per grammar instance rather than creating it once at module load.
+const semanticsCache = new WeakMap();
+
+function semanticsFor(grammar) {
+	let semantics = semanticsCache.get(grammar);
+	if (!semantics) {
+		semantics = grammar.createSemantics();
+		semantics.addOperation("collect(tokens)", collectOperation);
+		semanticsCache.set(grammar, semantics);
+	}
+	return semantics;
+}
 
 export function collectTokens(text) {
-	const match = spruce.match(text);
+	const grammar = grammarFor(text);
+	const match = grammar.match(text);
 	if (match.failed()) return [];
 	const tokens = [];
-	semantics(match).collect(tokens);
+	semanticsFor(grammar)(match).collect(tokens);
 	return tokens;
 }
 

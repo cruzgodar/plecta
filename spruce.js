@@ -18,7 +18,44 @@ const bt = "`";
 // matching function on the format's stdlib entry.
 const POST_COMPILE_HOOKS = ["document"];
 
-export const grammar = String.raw`
+// The parsed/inline/raw block delimiters can be prefixed with any number of
+// hashes (`#[[`, `##[[`, `###[[`, ...) to nest blocks past inner closers. Rather
+// than hardcode a fixed ceiling, we scan each input for the deepest hash run that
+// actually appears (see maxHashDepth) and generate exactly that many alternatives
+// on demand, longest-first so the greedy match wins.
+function blockRules(maxHashes)
+{
+	const parsed = [];
+	const inline = [];
+	const raw = [];
+
+	for (let n = maxHashes; n >= 1; n--)
+	{
+		const h = "#".repeat(n);
+		parsed.push(`"${h}[[" (~"]]${h}" any)* "]]${h}"`);
+		inline.push(`"${h}[" inlineWithoutEscapable<~"]${h}" any>+ "]${h}"`);
+		raw.push(`"${h}{" (functionCall | (~"}${h}" any))+ "}${h}"`);
+	}
+
+	parsed.push(`"[[" (~"]]" any)* "]]"`);
+	inline.push(`"[" inlineWithoutEscapable<~"]" any>+ "]"`);
+	raw.push(`"{" (functionCall | (~"}" any))+ "}"`);
+
+	const join = alts => alts.join("\n\t| ");
+
+	return `parsedBlock
+	= ${join(parsed)}
+
+  parsedInlineBlock
+	= ${join(inline)}
+
+  rawBlock
+	= ${join(raw)}`;
+}
+
+function buildGrammarSource(maxHashes)
+{
+	return String.raw`
 spruce {
   document = chunk*
   
@@ -146,33 +183,62 @@ spruce {
   spaceOrTabPaddedBlock = spaceOrTab* parsedOrRawBlock
   parsedOrRawBlock = parsedBlock | parsedInlineBlock | rawBlock
 
-  parsedBlock
-	= "###[[" (~"]]###" any)* "]]###"
-	| "##[[" (~"]]##" any)* "]]##"
-	| "#[[" (~"]]#" any)* "]]#"
-	| "[[" (~"]]" any)* "]]"
+  ${blockRules(maxHashes)}
 
-  parsedInlineBlock
-	= "###[" inlineWithoutEscapable<~"]###" any>+ "]###"
-	| "##[" inlineWithoutEscapable<~"]##" any>+ "]##"
-	| "#[" inlineWithoutEscapable<~"]#" any>+ "]#"
-	| "[" inlineWithoutEscapable<~"]" any>+ "]"
-
-  rawBlock
-	= "###{" (functionCall | (~"}###" any))+ "}###"
-	| "##{" (functionCall | (~"}##" any))+ "}##"
-	| "#{" (functionCall | (~"}#" any))+ "}#"
-	| "{" (functionCall | (~"}" any))+ "}"
-  
   parsedBlockEscapable = "]"
   rawBlockEscapable = "}"
 }`;
+}
 
+// Find the deepest run of hashes that forms part of a block delimiter, i.e. one
+// immediately followed by an opening bracket/brace (`###[`, `##{`, ...) or
+// immediately preceded by a closing one (`]###`, `}##`, ...). The result bounds
+// how many delimiter alternatives the on-demand grammar needs.
+function maxHashDepth(text)
+{
+	let max = 0;
+	const re = /#+(?=[[{])|(?<=[\]}])#+/g;
+	let match;
+	while ((match = re.exec(text)))
+	{
+		if (match[0].length > max) max = match[0].length;
+	}
+	return max;
+}
 
+// Compiled grammars (and their attached semantics) are cached by hash depth so
+// repeated compiles of similar documents reuse the same instance.
+const grammarCache = new Map();
 
-export const spruce = ohm.grammar(grammar);
+// The grammar and semantics currently in use. They're swapped per input by
+// useGrammar so the semantics handlers below (which re-match nested blocks
+// against `spruce`) always see the variant that can parse the active document.
+let spruce;
+let semantics;
 
-const semantics = spruce.createSemantics();
+function useGrammar(maxHashes)
+{
+	let entry = grammarCache.get(maxHashes);
+
+	if (!entry)
+	{
+		const grammar = ohm.grammar(buildGrammarSource(maxHashes));
+		entry = { grammar, semantics: attachSemantics(grammar.createSemantics()) };
+		grammarCache.set(maxHashes, entry);
+	}
+
+	spruce = entry.grammar;
+	semantics = entry.semantics;
+	return entry;
+}
+
+// Build (or reuse) the grammar that can parse `text`, make it active, and return
+// the compiled grammar. Used by tooling (e.g. the editor tokenizer) that needs
+// the ohm grammar directly rather than going through compile().
+export function grammarFor(text)
+{
+	return useGrammar(maxHashDepth(text)).grammar;
+}
 
 // Each handler that emits a function call into the desugared output captures
 // its location in the *original* source. The id is a sequential counter shared
@@ -191,7 +257,17 @@ function captureFunctionCall(node)
 // Convert all syntactic sugar to function calls, escaping characters as necessary.
 // The only characters that are unescaped are those in raw environments that would
 // no longer considered valid escape sequences when desugaring.
-semantics.addOperation("desugar", {
+// Attach all operations to a freshly created semantics for a given grammar.
+// Called once per cached grammar variant by useGrammar.
+function attachSemantics(sem)
+{
+	sem.addOperation("desugar", desugarOperation);
+	sem.addOperation("getCode", getCodeOperation);
+	sem.addOperation("insertCodeOutput(__spruceOutput)", insertCodeOutputOperation);
+	return sem;
+}
+
+const desugarOperation = {
 	heading(leadingSpace, hashes, _2, body)
 	{
 		captureFunctionCall(this);
@@ -395,7 +471,7 @@ semantics.addOperation("desugar", {
 	{
 		return children.map(c => c.desugar()).join("");
 	},
-});
+};
 
 
 
@@ -430,7 +506,7 @@ function escapeForTemplate(s)
 		.replace(/\$\{/g, "\\${");
 }
 
-semantics.addOperation("getCode", {
+const getCodeOperation = {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
 		const originalStart = declarationBlockOriginalLines[nextGetCodeDeclarationId++];
@@ -560,11 +636,11 @@ semantics.addOperation("getCode", {
 	{
 		return children.map(c => c.getCode()).join("");
 	},
-});
+};
 
 
 
-semantics.addOperation("insertCodeOutput(__spruceOutput)", {
+const insertCodeOutputOperation = {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
 		return "";
@@ -613,7 +689,7 @@ semantics.addOperation("insertCodeOutput(__spruceOutput)", {
 	{
 		return children.map(c => c.insertCodeOutput(this.args.__spruceOutput)).join("");
 	},
-});
+};
 
 
 
@@ -811,6 +887,11 @@ async function _compileImpl(input, outputFormat)
 
 	try
 	{
+		// Build the grammar for this input's hash depth and make it active before
+		// any matching. Desugaring only ever reduces hash depth, so the same
+		// grammar parses both the original input and the desugared output.
+		useGrammar(maxHashDepth(input));
+
 		const desugared = desugar(spruce.match(input));
 		const desugaredMatch = spruce.match(desugared);
 		const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
