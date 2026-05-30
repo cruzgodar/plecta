@@ -148,6 +148,8 @@ const handlers = {
 	// Raw blocks: the content is a string, EXCEPT for nested function calls,
 	// which keep their own coloring. We let children emit their tokens first
 	// (so nested @funcs render as functions), then fill the gaps with `string`.
+	// The `{` / `}` (and any hashes) delimiters are colored by bracket-pair
+	// colorization, which paints over this `string` fill.
 	rawBlock(node, t) {
 		const inner = [];
 		for (const child of node.children) child.collect(inner);
