@@ -144,9 +144,15 @@ spruce {
   
   spacePaddedBlock = space* parsedOrRawBlock
   spaceOrTabPaddedBlock = spaceOrTab* parsedOrRawBlock
-  parsedOrRawBlock = parsedBlock | rawBlock
+  parsedOrRawBlock = parsedBlock | parsedInlineBlock | rawBlock
 
   parsedBlock
+	= "###[[" (~"]]###" any)* "]]###"
+	| "##[[" (~"]]##" any)* "]]##"
+	| "#[[" (~"]]#" any)* "]]#"
+	| "[[" (~"]]" any)* "]]"
+
+  parsedInlineBlock
 	= "###[" inlineWithoutEscapable<~"]###" any>+ "]###"
 	| "##[" inlineWithoutEscapable<~"]##" any>+ "]##"
 	| "#[" inlineWithoutEscapable<~"]#" any>+ "]#"
@@ -189,19 +195,19 @@ semantics.addOperation("desugar", {
 	heading(leadingSpace, hashes, _2, body)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}@(heading{${hashes.sourceString.length}}[${body.desugar()}])`;
+		return `${leadingSpace.desugar()}(@heading{${hashes.sourceString.length}}[${body.desugar()}])`;
 	},
 
 	codeBlock(leadingSpace, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}@(codeBlock{${language.desugar()}}{${body.desugar()}})`;
+		return `${leadingSpace.desugar()}(@codeBlock{${language.desugar()}}{${body.desugar()}})`;
 	},
 
 	displayMath(leadingSpace, _2, _3, _4, body, _5, _6, _7, _8)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}@(displayMath{${body.desugar()}})`;
+		return `${leadingSpace.desugar()}(@displayMath{${body.desugar()}})`;
 	},
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -215,7 +221,7 @@ semantics.addOperation("desugar", {
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
-		return `${leadingSpace.desugar()}@(unorderedList[${firstItem.desugar()}]${restItemsWrapped})`;
+		return `${leadingSpace.desugar()}(@unorderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
 	unorderedItem(_1, _2, _3, body)
@@ -228,7 +234,7 @@ semantics.addOperation("desugar", {
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
-		return `${leadingSpace.desugar()}@(orderedList[${firstItem.desugar()}]${restItemsWrapped})`;
+		return `${leadingSpace.desugar()}(@orderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
 	orderedItem(_1, _2, _3, body)
@@ -239,7 +245,7 @@ semantics.addOperation("desugar", {
 	paragraph(body)
 	{
 		captureFunctionCall(this);
-		return `@(paragraph[${body.desugar()}])`;
+		return `(@paragraph[${body.desugar()}])`;
 	},
 
 
@@ -247,43 +253,43 @@ semantics.addOperation("desugar", {
 	boldItalic(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(boldItalic[${body.desugar()}])`;
+		return `(@boldItalic[${body.desugar()}])`;
 	},
 
 	bold(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(bold[${body.desugar()}])`;
+		return `(@bold[${body.desugar()}])`;
 	},
 
 	italic(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(italic[${body.desugar()}])`;
+		return `(@italic[${body.desugar()}])`;
 	},
 
 	link(_1, displayText, _2, _3, url, _4)
 	{
 		captureFunctionCall(this);
-		return `@(link[${displayText.desugar()}]{${url.desugar()}})`;
+		return `(@link[${displayText.desugar()}]{${url.desugar()}})`;
 	},
 
 	code(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(code{${body.desugar()}})`;
+		return `(@code{${body.desugar()}})`;
 	},
 
 	math(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(math{${body.desugar()}})`;
+		return `(@math{${body.desugar()}})`;
 	},
 
 	inlineDisplayMath(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `@(inlineDisplayMath{${body.desugar()}})`;
+		return `(@inlineDisplayMath{${body.desugar()}})`;
 	},
 
 	
@@ -340,6 +346,18 @@ semantics.addOperation("desugar", {
 	},
 
 	parsedBlock(start, body, end)
+	{
+		const inner = spruce.match(body.sourceString, "document");
+
+		if (inner.failed())
+		{
+			throw new Error(inner.message);
+		}
+
+		return `${start.desugar()}${semantics(inner).desugar()}${end.desugar()}`;
+	},
+
+	parsedInlineBlock(start, body, end)
 	{
 		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
 	},
@@ -504,7 +522,19 @@ semantics.addOperation("getCode", {
 		return block.getCode();
 	},
 
-	parsedBlock(_1, body, _2)
+	parsedBlock(open, body, close)
+	{
+		const inner = spruce.match(body.sourceString, "document");
+
+		if (inner.failed())
+		{
+			throw new Error(inner.message);
+		}
+
+		return semantics(inner).getCode();
+	},
+
+	parsedInlineBlock(_1, body, _2)
 	{
 		return body.getCode();
 	},

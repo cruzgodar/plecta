@@ -14,6 +14,11 @@ $$
 	{
 		return String.raw`<div style="display: flex; justify-content: center; width: 100%">${body}</div>`;
 	}
+
+	function f(stuff)
+	{
+		return `ran function on ${stuff}`;
+	}
 @@@tex
 	function center(body)
 	{
@@ -30,6 +35,16 @@ $$
 
 Paragraph with *italic*, **bold**, ***bolditalic*** 
 `code`, $math$, $$displaystyle math$$, [link](to somewhere),
-and escaped characters: @@x @*c@*
+and escaped characters: @@x @*c@* 
 
-@center[centered text!]{raw}
+This is its own paragraph:
+
+@f[parsed block]
+
+@f[[
+	entire paragraph
+
+	1. hello
+	2. also
+	3. three
+]]
