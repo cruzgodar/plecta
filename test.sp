@@ -44,6 +44,8 @@ This is its own paragraph:
 @f#[[
 	entire paragraph
 
+	@f[hi]
+
 	1. hello
 	2. also
 	3. three

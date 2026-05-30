@@ -145,6 +145,24 @@ const handlers = {
 		return true;
 	},
 
+	// Parsed blocks (`[[ ... ]]`, optionally hash-prefixed) contain a full
+	// sub-document — at compile time the body is re-matched against the `document`
+	// rule (see spruce.js). The grammar treats the body as raw `any` here, so to
+	// highlight the markup inside (headings, bold, nested @funcs, ...) we re-match
+	// it ourselves and splice the resulting tokens back at the body's offset. The
+	// `[[` / `]]` delimiters are left to bracket-pair colorization.
+	parsedBlock(node, t) {
+		const body = node.children[1];
+		const offset = body.source.startIdx;
+		const match = activeGrammar.match(body.sourceString, "document");
+		if (match.succeeded()) {
+			const inner = [];
+			semanticsFor(activeGrammar)(match).collect(inner);
+			for (const tok of inner) emit(t, tok.start + offset, tok.end + offset, tok.type);
+		}
+		return true;
+	},
+
 	// Raw blocks: the content is a string, EXCEPT for nested function calls,
 	// which keep their own coloring. We let children emit their tokens first
 	// (so nested @funcs render as functions), then fill the gaps with `string`.
@@ -226,8 +244,13 @@ function semanticsFor(grammar) {
 	return semantics;
 }
 
+// The grammar that can parse the document currently being tokenized. Held at
+// module scope so the parsedBlock handler can re-match block bodies against it.
+let activeGrammar = null;
+
 export function collectTokens(text) {
 	const grammar = grammarFor(text);
+	activeGrammar = grammar;
 	const match = grammar.match(text);
 	if (match.failed()) return [];
 	const tokens = [];

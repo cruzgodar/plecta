@@ -128,6 +128,23 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
+test("parsed block body is highlighted as a full document", () => {
+	const src = "@f[[# Heading\n\n**bold** and @g[x]]]";
+	const tokens = collectTokens(src);
+	// Block-level + inline markup inside the [[ ]] is highlighted.
+	assert.ok(tokens.find(t => t.type === "heading" && src.slice(t.start, t.end) === "# Heading"));
+	assert.ok(tokens.find(t => t.type === "bold" && src.slice(t.start, t.end) === "bold"));
+	// The nested @g function call inside the parsed block is highlighted too.
+	const gAt = src.indexOf("@g");
+	assert.ok(tokens.find(t => t.type === "spruceFunction" && t.start === gAt));
+});
+
+test("nested parsed block inside a parsed block is highlighted recursively", () => {
+	const src = "@f[[outer @h[[**deep**]] end]]";
+	const tokens = collectTokens(src);
+	assert.ok(tokens.find(t => t.type === "bold" && src.slice(t.start, t.end) === "deep"));
+});
+
 test("list marker `- ` emits a list token", () => {
 	const tokens = collectTokens("- item\n");
 	const list = tokens.find(t => t.type === "list");
