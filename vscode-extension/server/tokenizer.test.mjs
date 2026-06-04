@@ -145,6 +145,43 @@ test("nested parsed block inside a parsed block is highlighted recursively", () 
 	assert.ok(tokens.find(t => t.type === "bold" && src.slice(t.start, t.end) === "deep"));
 });
 
+test("nested brackets @g[@f[x]] pair correctly with sequential colors", () => {
+	// The `]]` must split into two closers, each matching its opener — the bug
+	// was the pair colorizer treating `]]` as a single (unmatched) token.
+	const src = "@g[@f[x]]";
+	const brackets = collectTokens(src)
+		.filter(t => t.type.startsWith("bracket"))
+		.sort((a, b) => a.start - b.start);
+	// Outer `[` (idx 2) and outer `]` (idx 8) share a color; inner `[` (5) / `]` (7) share another.
+	const outerOpen = brackets.find(t => t.start === 2);
+	const innerOpen = brackets.find(t => t.start === 5);
+	const innerClose = brackets.find(t => t.start === 7);
+	const outerClose = brackets.find(t => t.start === 8);
+	assert.ok(outerOpen && innerOpen && innerClose && outerClose, "all four delimiters colored");
+	assert.equal(outerOpen.type, outerClose.type);
+	assert.equal(innerOpen.type, innerClose.type);
+	assert.notEqual(outerOpen.type, innerOpen.type);
+});
+
+test("sibling brackets get sequential (not nesting-based) colors", () => {
+	const src = "@a[x] @b[y] @c[z]";
+	const opens = collectTokens(src)
+		.filter(t => t.type.startsWith("bracket") && src[t.start] === "[")
+		.sort((a, b) => a.start - b.start);
+	assert.equal(opens.length, 3);
+	// Three same-depth siblings cycle through the three colors.
+	assert.equal(opens[0].type, "bracket1");
+	assert.equal(opens[1].type, "bracket2");
+	assert.equal(opens[2].type, "bracket3");
+});
+
+test("hash-prefixed delimiter is colored as a single unit", () => {
+	const src = "@f#[[ inner ]]#";
+	const brackets = collectTokens(src).filter(t => t.type.startsWith("bracket"));
+	assert.ok(brackets.find(t => src.slice(t.start, t.end) === "#[["));
+	assert.ok(brackets.find(t => src.slice(t.start, t.end) === "]]#"));
+});
+
 test("list marker `- ` emits a list token", () => {
 	const tokens = collectTokens("- item\n");
 	const list = tokens.find(t => t.type === "list");

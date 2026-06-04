@@ -14,11 +14,40 @@ export const TOKEN_TYPES = [
 	"namespace",
 	"marker",
 	"languageTag",
+	"bracket1",
+	"bracket2",
+	"bracket3",
 ];
 
 export const TOKEN_MODIFIERS = [];
 
 const typeIndex = Object.fromEntries(TOKEN_TYPES.map((t, i) => [t, i]));
+
+// Bracket-pair colorization, done sequentially rather than by nesting depth:
+// each opening delimiter (in source order) takes the next color in the cycle,
+// and its matching closer reuses that same color. The counter is module scope
+// because parsedBlock re-matches its body through a fresh collect (see below),
+// and the colors must keep advancing across that boundary. Reset per document
+// in collectTokens.
+const BRACKET_COLORS = 2;
+let bracketColorCounter = 0;
+function nextBracketType() {
+	const type = `bracket${(bracketColorCounter % BRACKET_COLORS) + 1}`;
+	bracketColorCounter++;
+	return type;
+}
+
+// Emit the opening/closing delimiter terminals of a bracketed node with a freshly
+// allocated sequential color, running `collectBody` (which descends into the body,
+// allocating subsequent colors for any nested brackets) in between.
+function emitBracketed(node, t, collectBody) {
+	const open = node.children[0];
+	const close = node.children[node.children.length - 1];
+	const color = nextBracketType();
+	emit(t, open.source.startIdx, open.source.endIdx, color);
+	collectBody();
+	emit(t, close.source.startIdx, close.source.endIdx, color);
+}
 
 // Rule handlers. Returning true means "fully handled, don't recurse into children";
 // returning undefined falls through to recursing into all children.
@@ -118,11 +147,19 @@ const handlers = {
 		emit(t, s + closeBracket + 2, e - 1, "string");
 	},
 
+	// `(@name[...])` — the wrapping parens are a bracket pair, so they take part
+	// in the sequential coloring (the paren first, then any inner blocks). We take
+	// over recursion to interleave open-bracket / body / close-bracket correctly.
 	functionCall_wrapped(node, t) {
-		const atOffset = node.source.contents.indexOf("@");
-		if (atOffset < 0) return;
-		const s = node.source.startIdx + atOffset;
-		emit(t, s, s + 1, "spruceFunction");
+		emitBracketed(node, t, () => {
+			const atOffset = node.source.contents.indexOf("@");
+			if (atOffset >= 0) {
+				const s = node.source.startIdx + atOffset;
+				emit(t, s, s + 1, "spruceFunction");
+			}
+			for (const c of node.children) c.collect(t);
+		});
+		return true;
 	},
 	functionCall_bare(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
@@ -150,38 +187,50 @@ const handlers = {
 	// rule (see spruce.js). The grammar treats the body as raw `any` here, so to
 	// highlight the markup inside (headings, bold, nested @funcs, ...) we re-match
 	// it ourselves and splice the resulting tokens back at the body's offset. The
-	// `[[` / `]]` delimiters are left to bracket-pair colorization.
+	// `[[` / `]]` (and any hashes) delimiters take sequential bracket colors.
 	parsedBlock(node, t) {
-		const body = node.children[1];
-		const offset = body.source.startIdx;
-		const match = activeGrammar.match(body.sourceString, "document");
-		if (match.succeeded()) {
-			const inner = [];
-			semanticsFor(activeGrammar)(match).collect(inner);
-			for (const tok of inner) emit(t, tok.start + offset, tok.end + offset, tok.type);
-		}
+		emitBracketed(node, t, () => {
+			const body = node.children[1];
+			const offset = body.source.startIdx;
+			const match = activeGrammar.match(body.sourceString, "document");
+			if (match.succeeded()) {
+				const inner = [];
+				semanticsFor(activeGrammar)(match).collect(inner);
+				for (const tok of inner) emit(t, tok.start + offset, tok.end + offset, tok.type);
+			}
+		});
+		return true;
+	},
+
+	// Inline parsed blocks (`[ ... ]`, optionally hash-prefixed) are parsed
+	// directly (no re-match), so their body subtree can recurse normally. The
+	// `[` / `]` delimiters take sequential bracket colors.
+	parsedInlineBlock(node, t) {
+		emitBracketed(node, t, () => node.children[1].collect(t));
 		return true;
 	},
 
 	// Raw blocks: the content is a string, EXCEPT for nested function calls,
 	// which keep their own coloring. We let children emit their tokens first
 	// (so nested @funcs render as functions), then fill the gaps with `string`.
-	// The `{` / `}` (and any hashes) delimiters are colored by bracket-pair
-	// colorization, which paints over this `string` fill.
+	// The `{` / `}` (and any hashes) delimiters take sequential bracket colors.
 	rawBlock(node, t) {
-		const inner = [];
-		for (const child of node.children) child.collect(inner);
-		inner.sort((a, b) => a.start - b.start);
+		emitBracketed(node, t, () => {
+			const body = node.children[1];
+			const inner = [];
+			body.collect(inner);
+			inner.sort((a, b) => a.start - b.start);
 
-		const start = node.source.startIdx;
-		const end = node.source.endIdx;
-		let cursor = start;
-		for (const tok of inner) {
-			if (tok.start > cursor) emit(t, cursor, tok.start, "string");
-			if (tok.end > cursor) cursor = tok.end;
-		}
-		if (cursor < end) emit(t, cursor, end, "string");
-		for (const tok of inner) t.push(tok);
+			const start = body.source.startIdx;
+			const end = body.source.endIdx;
+			let cursor = start;
+			for (const tok of inner) {
+				if (tok.start > cursor) emit(t, cursor, tok.start, "string");
+				if (tok.end > cursor) cursor = tok.end;
+			}
+			if (cursor < end) emit(t, cursor, end, "string");
+			for (const tok of inner) t.push(tok);
+		});
 		return true;
 	},
 
@@ -253,6 +302,7 @@ export function collectTokens(text) {
 	activeGrammar = grammar;
 	const match = grammar.match(text);
 	if (match.failed()) return [];
+	bracketColorCounter = 0;
 	const tokens = [];
 	semanticsFor(grammar)(match).collect(tokens);
 	return tokens;

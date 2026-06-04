@@ -39,7 +39,10 @@
       { "id": "list", "description": "List marker (- or 1.)" },
       { "id": "spruceFunction", "description": "@function call marker and name" },
       { "id": "marker", "description": "Inline syntax delimiter (asterisks, underscores)" },
-      { "id": "languageTag", "description": "Language identifier after a ``` fence" }
+      { "id": "languageTag", "description": "Language identifier after a ``` fence" },
+      { "id": "bracket1", "description": "Bracket pair color 1 (sequential)" },
+      { "id": "bracket2", "description": "Bracket pair color 2 (sequential)" },
+      { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" }
     ],
     "semanticTokenScopes": [
       {
@@ -62,7 +65,10 @@
           "bold:spruce": { "bold": true },
           "italic:spruce": { "italic": true },
           "boldItalic:spruce": { "bold": true, "italic": true },
-          "marker:spruce": { "foreground": "#808080BF" }
+          "marker:spruce": { "foreground": "#808080BF" },
+          "bracket1:spruce": { "foreground": "#FFD700" },
+          "bracket2:spruce": { "foreground": "#DA70D6" },
+          "bracket3:spruce": { "foreground": "#179FFF" }
         }
       }
     }

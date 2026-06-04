@@ -3,7 +3,6 @@
 	"scopeName": "source.spruce",
 	"patterns": [
 		{ "include": "#declarationBlock" },
-		{ "include": "#declarationBlockClose" },
 		{ "include": "#displayMathBlock" },
 		{ "include": "#inlineDisplayMath" },
 		{ "include": "#inlineMath" }
@@ -11,20 +10,17 @@
 	"repository": {
 		"declarationBlock": {
 			"name": "meta.embedded.block.javascript.spruce",
-			"begin": "^[ \\t]*(@@@)[ \\t]*([a-zA-Z0-9]+)[ \\t]*$",
-			"while": "^(?![ \\t]*@@@)",
+			"begin": "^[ \\t]*(@@@)[ \\t]*([a-zA-Z0-9]*)[ \\t]*$",
+			"end": "^[ \\t]*(@@@)[ \\t]*$|^(?=[ \\t]*@@@[ \\t]*[a-zA-Z0-9])",
 			"beginCaptures": {
 				"1": { "name": "keyword.declaration-block.spruce" },
 				"2": { "name": "entity.name.type.declaration-block.spruce" }
 			},
+			"endCaptures": {
+				"1": { "name": "keyword.declaration-block.spruce" }
+			},
 			"contentName": "source.js",
 			"patterns": [{ "include": "source.js" }]
-		},
-		"declarationBlockClose": {
-			"match": "^[ \\t]*(@@@)[ \\t]*$",
-			"captures": {
-				"1": { "name": "keyword.declaration-block.spruce" }
-			}
 		},
 		"displayMathBlock": {
 			"name": "meta.embedded.block.latex.spruce",
