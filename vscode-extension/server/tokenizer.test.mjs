@@ -163,16 +163,33 @@ test("nested brackets @g[@f[x]] pair correctly with sequential colors", () => {
 	assert.notEqual(outerOpen.type, innerOpen.type);
 });
 
-test("sibling brackets get sequential (not nesting-based) colors", () => {
+test("adjacent same-depth blocks advance the color (not nesting-based)", () => {
 	const src = "@a[x] @b[y] @c[z]";
 	const opens = collectTokens(src)
 		.filter(t => t.type.startsWith("bracket") && src[t.start] === "[")
 		.sort((a, b) => a.start - b.start);
 	assert.equal(opens.length, 3);
-	// Three same-depth siblings cycle through the three colors.
+	// Same-depth siblings each advance, cycling through the available colors.
 	assert.equal(opens[0].type, "bracket1");
 	assert.equal(opens[1].type, "bracket2");
-	assert.equal(opens[2].type, "bracket3");
+	assert.equal(opens[2].type, "bracket1");
+});
+
+test("nesting and adjacency both advance, but nesting doesn't bleed into siblings", () => {
+	// @f[@g[x]][y] -> f's first `[` = color1, nested @g's `[` = color2,
+	// and f's second `[y]` is also color2 (adjacent to the first block).
+	const src = "@f[@g[x]][y]";
+	const brackets = collectTokens(src)
+		.filter(t => t.type.startsWith("bracket"))
+		.sort((a, b) => a.start - b.start);
+	// Delimiters in order: [ (f1, idx2), [ (g, idx5), ] (g, idx7), ] (f1, idx8), [ (f2, idx9), ] (f2, idx11)
+	const byStart = i => brackets.find(t => t.start === i);
+	assert.equal(byStart(2).type, "bracket1"); // f's first [
+	assert.equal(byStart(5).type, "bracket2"); // @g's [
+	assert.equal(byStart(7).type, "bracket2"); // @g's ]
+	assert.equal(byStart(8).type, "bracket1"); // f's first ]
+	assert.equal(byStart(9).type, "bracket2"); // f's second [
+	assert.equal(byStart(11).type, "bracket2"); // f's second ]
 });
 
 test("hash-prefixed delimiter is colored as a single unit", () => {

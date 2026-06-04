@@ -40,7 +40,7 @@ and escaped characters: @@x @*c@*
 
 This is its own paragraph:
 
-@g[@f[parsed block]]
+@g[@f[parsed block]]{}
 
 @testFunction#[[
 	entire paragraph

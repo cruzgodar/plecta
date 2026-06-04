@@ -23,30 +23,35 @@ export const TOKEN_MODIFIERS = [];
 
 const typeIndex = Object.fromEntries(TOKEN_TYPES.map((t, i) => [t, i]));
 
-// Bracket-pair colorization, done sequentially rather than by nesting depth:
-// each opening delimiter (in source order) takes the next color in the cycle,
-// and its matching closer reuses that same color. The counter is module scope
-// because parsedBlock re-matches its body through a fresh collect (see below),
-// and the colors must keep advancing across that boundary. Reset per document
+// Bracket-pair colorization. The color advances both with nesting depth and
+// between adjacent same-depth blocks, but a block's own nesting doesn't bleed
+// into its parent's sibling sequence. So instead of one global running counter,
+// each nesting level has its own counter: `bracketColorCounter` holds the color
+// for the next bracket opened at the current level. Opening a block colors it
+// with that value; its children start one past it (deeper = next color); and
+// once the block closes the level resets so the next sibling also lands one past
+// the block (adjacent = next color). e.g. `@f[@g[x]][y]` -> f=1, g=2, y=2.
+// Module scope because parsedBlock re-matches its body through a fresh collect
+// (see below) and the colors must flow across that boundary. Reset per document
 // in collectTokens.
 const BRACKET_COLORS = 2;
 let bracketColorCounter = 0;
-function nextBracketType() {
-	const type = `bracket${(bracketColorCounter % BRACKET_COLORS) + 1}`;
-	bracketColorCounter++;
-	return type;
+function bracketType(color) {
+	return `bracket${(color % BRACKET_COLORS) + 1}`;
 }
 
-// Emit the opening/closing delimiter terminals of a bracketed node with a freshly
-// allocated sequential color, running `collectBody` (which descends into the body,
-// allocating subsequent colors for any nested brackets) in between.
+// Emit the opening/closing delimiter terminals of a bracketed node, running
+// `collectBody` (which descends into the body) in between. Children are colored
+// one past this block; afterwards the level is reset so the next sibling is too.
 function emitBracketed(node, t, collectBody) {
 	const open = node.children[0];
 	const close = node.children[node.children.length - 1];
-	const color = nextBracketType();
-	emit(t, open.source.startIdx, open.source.endIdx, color);
+	const color = bracketColorCounter;
+	emit(t, open.source.startIdx, open.source.endIdx, bracketType(color));
+	bracketColorCounter = color + 1;
 	collectBody();
-	emit(t, close.source.startIdx, close.source.endIdx, color);
+	bracketColorCounter = color + 1;
+	emit(t, close.source.startIdx, close.source.endIdx, bracketType(color));
 }
 
 // Rule handlers. Returning true means "fully handled, don't recurse into children";

@@ -38,8 +38,8 @@ function blockRules(maxHashes)
 	}
 
 	parsed.push(`"[[" (~"]]" any)* "]]"`);
-	inline.push(`"[" inlineWithoutEscapable<~"]" any>+ "]"`);
-	raw.push(`"{" (functionCall | (~"}" any))+ "}"`);
+	inline.push(`"[" inlineWithoutEscapable<~"]" any>* "]"`);
+	raw.push(`"{" (functionCall | (~"}" any))* "}"`);
 
 	const join = alts => alts.join("\n\t| ");
 
