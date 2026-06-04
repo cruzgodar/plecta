@@ -272,13 +272,13 @@ const desugarOperation = {
 	heading(leadingSpace, hashes, _2, body)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}(@heading{${hashes.sourceString.length}}[${body.desugar()}])`;
+		return `${leadingSpace.desugar()}(@heading[${body.desugar()}]{${hashes.sourceString.length}})`;
 	},
 
 	codeBlock(leadingSpace, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}(@codeBlock{${language.desugar()}}{${body.desugar()}})`;
+		return `${leadingSpace.desugar()}(@codeBlock{${body.desugar()}}{${language.desugar()}})`;
 	},
 
 	displayMath(leadingSpace, _2, _3, _4, body, _5, _6, _7, _8)

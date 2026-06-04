@@ -18,12 +18,12 @@ ${body}
 </html>`;
 	},
 
-	heading(headingNumber, body)
+	heading(body, headingNumber)
 	{
 		return r`<h${headingNumber}>${body}</h${headingNumber}>`;
 	},
 
-	codeBlock(language, body)
+	codeBlock(body, language)
 	{
 		return r`<pre><code>${body}</code></pre>`;
 	},
@@ -117,13 +117,13 @@ ${body}
 \end{document}`;
 	},
 
-	heading(headingNumber, body)
+	heading(body, headingNumber)
 	{
 		const commands = ["section", "subsection", "subsubsection", "paragraph", "subparagraph", "subparagraph"];
 		return `\\${commands[headingNumber - 1]}{${body}}`;
 	},
 
-	codeBlock(language, body)
+	codeBlock(body, language)
 	{
 		const languageOption = language ? `[language=${language}]` : "";
 		return r`\begin{lstlisting}${languageOption}
