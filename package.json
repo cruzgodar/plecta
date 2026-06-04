@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "description": "A markdown-like language with JavaScript folding that can compile to HTML and LaTeX",
-  "main": "index.js",
+  "main": "spruce.js",
+  "bin": {
+    "spruce": "spruce.js"
+  },
   "scripts": {
     "test": "node --test"
   },

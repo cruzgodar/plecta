@@ -1,5 +1,6 @@
+#!/usr/bin/env node
 import { randomUUID } from "crypto";
-import { unlinkSync } from "fs";
+import { realpathSync, unlinkSync } from "fs";
 import { readFile, unlink, writeFile } from "fs/promises";
 import * as ohm from "ohm-js";
 import { extname, join } from "path";
@@ -923,7 +924,10 @@ async function _compileImpl(input, outputFormat)
 	}
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+// process.argv[1] may be a symlink (e.g. the `spruce` bin installed by
+// `npm link`/`npm install -g`), so resolve it to the real path before
+// comparing against this module's URL — otherwise the CLI silently no-ops.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href)
 {
 	const argv = process.argv.slice(2);
 	const positional = [];
