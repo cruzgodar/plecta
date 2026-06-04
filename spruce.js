@@ -859,19 +859,19 @@ process.on("SIGINT", () => process.exit(130))
 // access. Chaining keeps the public API a plain async function.
 let compileQueue = Promise.resolve();
 
-export function compile(input, outputFormat)
+export function compile(input, outputFormat, filePath = null)
 {
-	const next = compileQueue.then(() => _compileImpl(input, outputFormat));
+	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath));
 	compileQueue = next.catch(() => {});
 	return next;
 }
 
-async function _compileImpl(input, outputFormat)
+async function _compileImpl(input, outputFormat, filePath)
 {
 	// Snapshot the keys we're about to splat so we can restore on the way out.
 	// Users still override behavior by declaring/importing the name in their
 	// document — that shadows globalThis during the generated module's
-	// execution exactly as before — but after compile() returns the host's
+	// execution exactly as before — but after compile() returns, the host's
 	// globalThis is unchanged.
 	const snapshot = [];
 	if (Object.hasOwn(stdlib, outputFormat))
@@ -907,7 +907,7 @@ async function _compileImpl(input, outputFormat)
 				const hook = formatStdlib[name];
 				if (typeof hook === "function")
 				{
-					result = hook(result);
+					result = hook(result, filePath);
 				}
 			}
 		}
@@ -957,6 +957,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	const outputFormat = formatOverride ?? extname(outputPath).slice(1).toLowerCase();
 
 	const input = await readFile(inputPath, "utf-8");
-	const result = await compile(input, outputFormat);
+	const result = await compile(input, outputFormat, inputPath);
 	await writeFile(outputPath, result);
 }
