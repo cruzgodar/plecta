@@ -50,7 +50,7 @@
           "codeBlock": ["variable"],
           "string": ["variable"],
           "list": ["markup.heading"],
-          "spruceFunction": ["keyword.control"],
+          "spruceFunction": ["keyword"],
           "languageTag": ["entity.name.type"]
         }
       }

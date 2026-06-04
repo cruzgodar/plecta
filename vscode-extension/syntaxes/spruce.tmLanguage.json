@@ -14,7 +14,7 @@
 			"begin": "^[ \\t]*(@@@)[ \\t]*([a-zA-Z0-9]+)[ \\t]*$",
 			"while": "^(?![ \\t]*@@@)",
 			"beginCaptures": {
-				"1": { "name": "keyword.control.declaration-block.spruce" },
+				"1": { "name": "keyword.declaration-block.spruce" },
 				"2": { "name": "entity.name.type.declaration-block.spruce" }
 			},
 			"contentName": "source.js",
@@ -23,7 +23,7 @@
 		"declarationBlockClose": {
 			"match": "^[ \\t]*(@@@)[ \\t]*$",
 			"captures": {
-				"1": { "name": "keyword.control.declaration-block.spruce" }
+				"1": { "name": "keyword.declaration-block.spruce" }
 			}
 		},
 		"displayMathBlock": {

@@ -2,13 +2,14 @@
 ## subheading
 
 ```js
-code
+	code
 ```
 $$
-math \begin{align}
-\end{align}
+	math
 $$
 
+@@@
+	import { testFunction } from "./testDeclarations.js";
 @@@html
 	function center(body)
 	{
@@ -35,13 +36,13 @@ $$
 
 Paragraph with *italic*, **bold**, ***bolditalic*** 
 `code`, $math$, $$displaystyle math$$, [link](to somewhere),
-and escaped characters: @@x @*c@* 
+and escaped characters: @@x @*c@*
 
 This is its own paragraph:
 
-@f[parsed block]
+@g[@f[parsed block]]
 
-@f#[[
+@testFunction#[[
 	entire paragraph
 
 	@f[hi]
@@ -49,4 +50,4 @@ This is its own paragraph:
 	1. hello
 	2. also
 	3. three
-]]#
+]]#{hello}
