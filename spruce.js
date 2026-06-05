@@ -89,6 +89,7 @@ spruce {
     | declarationBlock
     | unorderedList
     | orderedList
+	| htmlTag
     | newline          // Needs to be above paragraph or else newlines will always lead to paragraphs
     | functionCallChunk
     | paragraph
@@ -136,10 +137,14 @@ spruce {
   orderedItemStarter
     = (digit+ ".") --numeric
     | "+"          --plus
+
+
+
+  htmlTag = spaceOrTab* "<" (~newline any)*
   
   
   
-  paragraph = inline<~(doubleNewline | end) any>+
+  paragraph = inline<~(doubleNewline | end) ~(newline spaceOrTab* "<") any>+
 
   boldItalic
     = "***" inline<~"***" any>+ "***"
