@@ -38,6 +38,36 @@ test("***boldItalic*** has 3-char markers and inner boldItalic", () => {
 	assert.ok(tokens.find(t => t.type === "boldItalic"));
 });
 
+test("bold link keeps linkText type and gains the bold modifier", () => {
+	const tokens = collectTokens("**[text](url)**");
+	const link = tokens.find(t => t.type === "linkText");
+	assert.ok(link, "inner link is still recognized (not swallowed by bold)");
+	assert.equal(link.modifiers & 1, 1, "linkText carries the bold modifier bit");
+	// Plain bold text would be type `bold`; here there is none, only the link.
+	assert.ok(!tokens.find(t => t.type === "bold"));
+});
+
+test("italic nested in bold composes both modifiers on the inner span", () => {
+	const tokens = collectTokens("**a *b* c**");
+	// `b` is the italic content inside the bold span -> both bits set.
+	const inner = tokens.find(t => t.type === "italic");
+	assert.ok(inner);
+	assert.equal(inner.modifiers, 0b11, "bold | italic");
+	// The surrounding plain text is bold-only.
+	const boldGap = tokens.find(t => t.type === "bold");
+	assert.ok(boldGap);
+	assert.equal(boldGap.modifiers, 0b01, "bold only");
+});
+
+test("tokenize encodes the modifier bitmask (not a hardcoded 0)", () => {
+	const data = tokenize("**[t](u)**");
+	// Every token row is [dLine, dChar, len, typeIdx, modifiers]; at least one
+	// row must carry the bold bit now that emphasis composes.
+	let sawModifier = false;
+	for (let i = 4; i < data.length; i += 5) if (data[i] & 1) sawModifier = true;
+	assert.ok(sawModifier, "expected at least one token with the bold modifier set");
+});
+
 test("inline `code` splits backticks + content (backticks are string)", () => {
 	const tokens = collectTokens("`x`");
 	const strings = tokens.filter(t => t.type === "string");

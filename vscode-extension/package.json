@@ -45,6 +45,10 @@
       { "id": "bracket2", "description": "Bracket pair color 2 (sequential)" },
       { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" }
     ],
+    "semanticTokenModifiers": [
+      { "id": "bold", "description": "Bold emphasis, composes with any token type" },
+      { "id": "italic", "description": "Italic emphasis, composes with any token type" }
+    ],
     "semanticTokenScopes": [
       {
         "language": "spruce",
@@ -63,9 +67,8 @@
       "editor.semanticTokenColorCustomizations": {
         "enabled": true,
         "rules": {
-          "bold:spruce": { "bold": true },
-          "italic:spruce": { "italic": true },
-          "boldItalic:spruce": { "bold": true, "italic": true },
+          "*.bold:spruce": { "bold": true },
+          "*.italic:spruce": { "italic": true },
           "spruceFunction:spruce": { "foreground": "#AA8BD3", "bold": true },
           "linkText:spruce": { "foreground": "#94D893" },
           "marker:spruce": { "foreground": "#808080BF" },

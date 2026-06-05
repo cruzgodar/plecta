@@ -24,9 +24,24 @@ export const TOKEN_TYPES = [
 	"bracket3",
 ];
 
-export const TOKEN_MODIFIERS = [];
+// Bold/italic are token *modifiers*, not types: they compose with whatever type
+// a span already has (a bold link stays `linkText` green and additionally gains
+// the bold style) instead of replacing it. LSP tokens can't overlap, so we can't
+// layer a separate "bold" token over a link — the styling has to ride along on
+// the link's own token as a modifier bit.
+export const TOKEN_MODIFIERS = ["bold", "italic"];
 
 const typeIndex = Object.fromEntries(TOKEN_TYPES.map((t, i) => [t, i]));
+const modifierIndex = Object.fromEntries(TOKEN_MODIFIERS.map((m, i) => [m, i]));
+const MOD_BOLD = 1 << modifierIndex.bold;
+const MOD_ITALIC = 1 << modifierIndex.italic;
+
+// Bold/italic nest (e.g. `**a *b* c**`), and the inner span should carry both
+// modifiers. We thread the active set down through recursion: emitting a token
+// stamps it with whatever modifiers are in scope, and entering a bold/italic
+// span ORs in its bit for the duration of its children. Module scope because
+// emit() (called from deep in the tree) needs to read it. Reset per document.
+let activeModifiers = 0;
 
 // Bracket-pair colorization. The color advances both with nesting depth and
 // between adjacent same-depth blocks, but a block's own nesting doesn't bleed
@@ -68,17 +83,17 @@ const handlers = {
 	},
 
 	bold(node, t) {
-		emitMarkered(t, node, 2, "bold");
+		emitStyledSpan(t, node, 2, "bold", MOD_BOLD);
 		return true;
 	},
 
 	italic(node, t) {
-		emitMarkered(t, node, 1, "italic");
+		emitStyledSpan(t, node, 1, "italic", MOD_ITALIC);
 		return true;
 	},
 
 	boldItalic(node, t) {
-		emitMarkered(t, node, 3, "boldItalic");
+		emitStyledSpan(t, node, 3, "boldItalic", MOD_BOLD | MOD_ITALIC);
 		return true;
 	},
 
@@ -209,7 +224,11 @@ const handlers = {
 			if (match.succeeded()) {
 				const inner = [];
 				semanticsFor(activeGrammar)(match).collect(inner);
-				for (const tok of inner) emit(t, tok.start + offset, tok.end + offset, tok.type);
+				// Preserve modifiers computed inside the re-matched sub-document
+				// (e.g. **bold** within the block) and add any ambient ones.
+				for (const tok of inner) {
+					emitWith(t, tok.start + offset, tok.end + offset, tok.type, tok.modifiers | activeModifiers);
+				}
 			}
 		});
 		return true;
@@ -277,17 +296,42 @@ const handlers = {
 };
 
 function emit(tokens, start, end, type) {
-	if (end > start) tokens.push({ start, end, type });
+	if (end > start) tokens.push({ start, end, type, modifiers: activeModifiers });
 }
 
-// Emit a `marker` token for the first/last `markerLen` chars of `node` and
-// a `contentType` token for everything in between.
-function emitMarkered(tokens, node, markerLen, contentType) {
+// Like emit, but with an explicit modifier set instead of the ambient one.
+function emitWith(tokens, start, end, type, modifiers) {
+	if (end > start) tokens.push({ start, end, type, modifiers });
+}
+
+// Emit a bold/italic span: `marker` tokens for the first/last `markerLen`
+// delimiter chars, then recurse into the content so nested constructs (links,
+// code, @funcs, nested emphasis) keep their own colors — only OR-ing in `modBit`
+// so they additionally render bold/italic. Plain text not claimed by any child
+// token is filled with `contentType` (also carrying the modifier). Children and
+// gap-fillers stay non-overlapping, as LSP semantic tokens require.
+function emitStyledSpan(tokens, node, markerLen, contentType, modBit) {
 	const s = node.source.startIdx;
 	const e = node.source.endIdx;
-	emit(tokens, s, s + markerLen, "marker");
-	emit(tokens, s + markerLen, e - markerLen, contentType);
-	emit(tokens, e - markerLen, e, "marker");
+	const contentStart = s + markerLen;
+	const contentEnd = e - markerLen;
+	emit(tokens, s, contentStart, "marker");
+	emit(tokens, contentEnd, e, "marker");
+
+	const prev = activeModifiers;
+	activeModifiers = prev | modBit;
+	const inner = [];
+	for (const c of node.children) c.collect(inner);
+	activeModifiers = prev;
+
+	inner.sort((a, b) => a.start - b.start);
+	let cursor = contentStart;
+	for (const tok of inner) {
+		if (tok.start > cursor) emitWith(tokens, cursor, tok.start, contentType, prev | modBit);
+		if (tok.end > cursor) cursor = tok.end;
+	}
+	if (cursor < contentEnd) emitWith(tokens, cursor, contentEnd, contentType, prev | modBit);
+	for (const tok of inner) tokens.push(tok);
 }
 
 const collectOperation = {
@@ -327,6 +371,7 @@ export function collectTokens(text) {
 	const match = grammar.match(text);
 	if (match.failed()) return [];
 	bracketColorCounter = 0;
+	activeModifiers = 0;
 	const tokens = [];
 	semanticsFor(grammar)(match).collect(tokens);
 	return tokens;
@@ -352,7 +397,7 @@ export function encodeTokens(text, tokens) {
 	for (const tok of filtered) {
 		const deltaLine = tok.line - prevLine;
 		const deltaChar = deltaLine === 0 ? tok.char - prevChar : tok.char;
-		data.push(deltaLine, deltaChar, tok.length, typeIndex[tok.type], 0);
+		data.push(deltaLine, deltaChar, tok.length, typeIndex[tok.type], tok.modifiers | 0);
 		prevLine = tok.line;
 		prevChar = tok.char;
 	}
@@ -383,21 +428,22 @@ function offsetToLineChar(offset, lineStarts) {
 }
 
 function splitByLine(tok, lineStarts, text, out) {
+	const mod = tok.modifiers | 0;
 	const startPos = offsetToLineChar(tok.start, lineStarts);
 	const endPos = offsetToLineChar(tok.end, lineStarts);
 	if (startPos.line === endPos.line) {
 		const length = endPos.char - startPos.char;
-		if (length > 0) out.push({ line: startPos.line, char: startPos.char, length, type: tok.type });
+		if (length > 0) out.push({ line: startPos.line, char: startPos.char, length, type: tok.type, modifiers: mod });
 		return;
 	}
 	const firstLineEnd = lineEndOffset(text, lineStarts, startPos.line);
 	const firstLen = firstLineEnd - tok.start;
-	if (firstLen > 0) out.push({ line: startPos.line, char: startPos.char, length: firstLen, type: tok.type });
+	if (firstLen > 0) out.push({ line: startPos.line, char: startPos.char, length: firstLen, type: tok.type, modifiers: mod });
 	for (let l = startPos.line + 1; l < endPos.line; l++) {
 		const len = lineEndOffset(text, lineStarts, l) - lineStarts[l];
-		if (len > 0) out.push({ line: l, char: 0, length: len, type: tok.type });
+		if (len > 0) out.push({ line: l, char: 0, length: len, type: tok.type, modifiers: mod });
 	}
-	if (endPos.char > 0) out.push({ line: endPos.line, char: 0, length: endPos.char, type: tok.type });
+	if (endPos.char > 0) out.push({ line: endPos.line, char: 0, length: endPos.char, type: tok.type, modifiers: mod });
 }
 
 function lineEndOffset(text, lineStarts, line) {
