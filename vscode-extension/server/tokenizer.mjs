@@ -14,6 +14,7 @@ export const TOKEN_TYPES = [
 	"list",
 	"spruceFunction",
 	"string",
+	"linkText",
 	"operator",
 	"namespace",
 	"marker",
@@ -153,7 +154,10 @@ const handlers = {
 		emit(t, s, s + 1, "operator");
 		emit(t, s + closeBracket, s + closeBracket + 2, "operator");
 		emit(t, e - 1, e, "operator");
+		// Display text `[...]` is green (linkText); the URL `(...)` stays string.
+		emit(t, s + 1, s + closeBracket, "linkText");
 		emit(t, s + closeBracket + 2, e - 1, "string");
+		return true;
 	},
 
 	// `(@name[...])` — the wrapping parens are a bracket pair, so they take part
