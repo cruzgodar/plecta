@@ -70,7 +70,7 @@
           "linkText:spruce": { "foreground": "#94D893" },
           "marker:spruce": { "foreground": "#808080BF" },
           "bracket1:spruce": { "foreground": "#FFD700" },
-          "bracket2:spruce": { "foreground": "#DA70D6" },
+          "bracket2:spruce": { "foreground": "#179FFF" },
           "bracket3:spruce": { "foreground": "#179FFF" }
         }
       }
