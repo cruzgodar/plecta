@@ -7,6 +7,9 @@
   "bin": {
     "spruce": "spruce.js"
   },
+  "engines": {
+    "node": ">=20.6.0"
+  },
   "scripts": {
     "test": "node --test"
   },

@@ -2,13 +2,28 @@
 import { randomUUID } from "crypto";
 import { realpathSync, unlinkSync } from "fs";
 import { readFile, unlink, writeFile } from "fs/promises";
+import { register } from "module";
 import * as ohm from "ohm-js";
-import { extname, join } from "path";
+import { extname, join, resolve as resolvePath } from "path";
 import process from "process";
 import { pathToFileURL } from "url";
 import { stdlib } from "./stdlib.js";
 
 const pendingCleanup = new Set();
+
+// The resolve hook that reroutes absolute imports in declaration blocks runs on
+// a separate thread, so it's registered once and stays for the process. Imports
+// only get rerouted when their module URL carries a `?spruceRoot=` marker, so
+// registering this unconditionally is a no-op until a root is in play.
+let importHooksRegistered = false;
+function ensureImportHooks()
+{
+	if (!importHooksRegistered)
+	{
+		register("./importHooks.js", import.meta.url);
+		importHooksRegistered = true;
+	}
+}
 
 const bt = "`";
 
@@ -18,6 +33,13 @@ const bt = "`";
 // another whole-document transform, append its name here and provide a
 // matching function on the format's stdlib entry.
 const POST_COMPILE_HOOKS = ["document"];
+
+// Reserved property on __spruceOutput where the generated module stashes any
+// declaration-block binding (declared or imported) that shadows a post-compile
+// hook. These hooks run on the host *after* the module, so unlike inline
+// @-calls they can't be shadowed from module scope directly — we ferry the
+// override out so the host can prefer it over the stdlib default.
+const HOOK_OVERRIDES_KEY = "__spruceHookOverrides";
 
 // The parsed/inline/raw block delimiters can be prefixed with any number of
 // hashes (`#[[`, `##[[`, `###[[`, ...) to nest blocks past inner closers. Rather
@@ -811,13 +833,24 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 	return false;
 }
 
-async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, baseDir = process.cwd())
+async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, root = null, baseDir = process.cwd())
 {
+	// Post-compile hooks (e.g. `document`) run on the host after this module,
+	// so a declaration-block binding can't shadow them the way inline @-calls
+	// do. Capture any such binding into the storage object as an epilogue —
+	// `typeof` stays safe when the name was never declared — so the host can
+	// prefer it over the stdlib default. Appended after the user code, so it
+	// doesn't shift any declarationBlockRanges line offsets.
+	const captureOverrides = POST_COMPILE_HOOKS
+		.map(name => `if(typeof ${name}!=="undefined")(${storageName}[${JSON.stringify(HOOK_OVERRIDES_KEY)}]??={})[${JSON.stringify(name)}]=${name};`)
+		.join("\n");
+
 	// One-line prelude so declarationBlockRanges' line offset (linesBefore + 2)
 	// stays correct. The storage var is randomized; the export-as alias keeps
 	// `module.__spruceOutput` resolving for the host-side read below.
 	const body = `const ${storageName} = {}; export { ${storageName} as __spruceOutput };
-${code}`;
+${code}
+${captureOverrides}`;
 	if (process.env.SPRUCE_DEBUG_BODY) console.error("---BODY---\n" + body + "\n---END---");
 
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
@@ -825,9 +858,18 @@ ${code}`;
 	await writeFile(path, body);
 	pendingCleanup.add(path);
 
+	// Tag the import URL with the root so importHooks.js can reroute absolute
+	// ("/x") specifiers in this block — and its import subgraph — to <root>/x.
+	const moduleUrl = pathToFileURL(path);
+	if (root)
+	{
+		moduleUrl.searchParams.set("spruceRoot", root);
+		ensureImportHooks();
+	}
+
 	try
 	{
-		const module = await import(pathToFileURL(path).href);
+		const module = await import(moduleUrl.href);
 		await unlink(path).catch(() => {});
 		pendingCleanup.delete(path);
 		return module.__spruceOutput;
@@ -859,14 +901,14 @@ process.on("SIGINT", () => process.exit(130))
 // access. Chaining keeps the public API a plain async function.
 let compileQueue = Promise.resolve();
 
-export function compile(input, outputFormat, filePath = null)
+export function compile(input, outputFormat, filePath = null, root = null)
 {
-	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath));
+	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, root));
 	compileQueue = next.catch(() => {});
 	return next;
 }
 
-async function _compileImpl(input, outputFormat, filePath)
+async function _compileImpl(input, outputFormat, filePath, root)
 {
 	// Snapshot the keys we're about to splat so we can restore on the way out.
 	// Users still override behavior by declaring/importing the name in their
@@ -896,19 +938,20 @@ async function _compileImpl(input, outputFormat, filePath)
 		const desugared = desugar(spruce.match(input));
 		const desugaredMatch = spruce.match(desugared);
 		const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
-		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName);
+		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName, root);
 		let result = insertCodeOutput(desugaredMatch, __spruceOutput);
 
 		const formatStdlib = stdlib[outputFormat];
-		if (formatStdlib)
+		// A declaration block can shadow a post-compile hook by declaring or
+		// importing its name; that override (if any) was ferried out on the
+		// storage object and takes precedence over the stdlib default.
+		const hookOverrides = __spruceOutput?.[HOOK_OVERRIDES_KEY] ?? {};
+		for (const name of POST_COMPILE_HOOKS)
 		{
-			for (const name of POST_COMPILE_HOOKS)
+			const hook = hookOverrides[name] ?? formatStdlib?.[name];
+			if (typeof hook === "function")
 			{
-				const hook = formatStdlib[name];
-				if (typeof hook === "function")
-				{
-					result = hook(result, filePath);
-				}
+				result = hook(result, filePath);
 			}
 		}
 
@@ -932,6 +975,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	const argv = process.argv.slice(2);
 	const positional = [];
 	let formatOverride = null;
+	let rootOverride = null;
 
 	for (let i = 0; i < argv.length; i++)
 	{
@@ -939,6 +983,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		if (arg === "-f" || arg === "--format")
 		{
 			formatOverride = argv[++i];
+		}
+		else if (arg === "-r" || arg === "--root")
+		{
+			rootOverride = argv[++i];
 		}
 		else
 		{
@@ -950,13 +998,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 
 	if (!inputPath || !outputPath)
 	{
-		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>]\n");
+		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--root <dir>]\n");
 		process.exit(1);
 	}
 
 	const outputFormat = formatOverride ?? extname(outputPath).slice(1).toLowerCase();
+	// Resolve --root against the cwd so relative roots behave intuitively.
+	const root = rootOverride ? resolvePath(rootOverride) : null;
 
 	const input = await readFile(inputPath, "utf-8");
-	const result = await compile(input, outputFormat, inputPath);
+	// Pass the absolute input path so post-compile hooks (e.g. `document`) get a
+	// stable, fully-qualified path rather than whatever relative form the CLI
+	// was invoked with.
+	const result = await compile(input, outputFormat, resolvePath(inputPath), root);
 	await writeFile(outputPath, result);
 }

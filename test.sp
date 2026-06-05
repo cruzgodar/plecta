@@ -20,6 +20,13 @@ $$
 	{
 		return `ran function on ${stuff}`;
 	}
+
+	function thm(name, body)
+	{
+		return `<div class="thm"> <p>Theorem: ${name}</p>
+		${body}
+		</div>`
+	}
 @@@tex
 	function center(body)
 	{
@@ -38,9 +45,19 @@ Paragraph with *italic*, **bold**, ***bolditalic***
 `code`, $math$, $$displaystyle math$$, [link](to somewhere),
 and escaped characters: @@x @*c@*
 
-This is its own paragraph:
+iwfb;iweufb
+@f[
+    argument
+		argument2
+]
 
-@g[@f[parsed block]]{}
+@thm[
+	name
+][[
+	body
+]]
+
+@g{ @f[h] }
 
 @testFunction#[[
 	entire paragraph
