@@ -144,7 +144,7 @@ spruce {
   
   
   
-  paragraph = inline<~(doubleNewline | end) ~(newline spaceOrTab* "<") any>+
+  paragraph = spaceOrTab* inline<~(doubleNewline | end) ~(newline spaceOrTab* "<") any>+
 
   boldItalic
     = "***" inline<~"***" any>+ "***"
@@ -181,7 +181,7 @@ spruce {
     | inlineDisplayMath
     | link
     | functionCall
-    | allowed
+    | (~boldItalic ~bold ~italic ~code ~math ~inlineDisplayMath ~link ~functionCall allowed)+ --text
  
 
   // The raw content of code blocks, display math, etc.
@@ -296,22 +296,22 @@ function attachSemantics(sem)
 }
 
 const desugarOperation = {
-	heading(leadingSpace, hashes, _2, body)
+	heading(_1, hashes, _2, body)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}(@heading[${body.desugar()}]{${hashes.sourceString.length}})`;
+		return `(@heading[${body.desugar()}]{${hashes.sourceString.length}})`;
 	},
 
-	codeBlock(leadingSpace, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
+	codeBlock(_1, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}(@codeBlock{${body.desugar()}}{${language.desugar()}})`;
+		return `(@codeBlock{${body.desugar()}}{${language.desugar()}})`;
 	},
 
-	displayMath(leadingSpace, _2, _3, _4, body, _5, _6, _7, _8)
+	displayMath(_1, _2, _3, _4, body, _5, _6, _7, _8)
 	{
 		captureFunctionCall(this);
-		return `${leadingSpace.desugar()}(@displayMath{${body.desugar()}})`;
+		return `(@displayMath{${body.desugar()}})`;
 	},
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -320,12 +320,12 @@ const desugarOperation = {
 		return this.sourceString;
 	},
 
-	unorderedList(leadingSpace, firstItem, _1, restItems, _2)
+	unorderedList(_1, firstItem, _2, restItems, _3)
 	{
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
-		return `${leadingSpace.desugar()}(@unorderedList[${firstItem.desugar()}]${restItemsWrapped})`;
+		return `(@unorderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
 	unorderedItem(_1, _2, _3, body)
@@ -333,12 +333,12 @@ const desugarOperation = {
 		return body.desugar();
 	},
 
-	orderedList(leadingSpace, firstItem, _1, restItems, _2)
+	orderedList(_1, firstItem, _2, restItems, _3)
 	{
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
 
-		return `${leadingSpace.desugar()}(@orderedList[${firstItem.desugar()}]${restItemsWrapped})`;
+		return `(@orderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
 	orderedItem(_1, _2, _3, body)
@@ -346,7 +346,7 @@ const desugarOperation = {
 		return body.desugar();
 	},
 
-	paragraph(body)
+	paragraph(_1, body)
 	{
 		captureFunctionCall(this);
 		return `(@paragraph[${body.desugar()}])`;
@@ -394,6 +394,11 @@ const desugarOperation = {
 	{
 		captureFunctionCall(this);
 		return `(@inlineDisplayMath{${body.desugar()}})`;
+	},
+
+	inlineWithoutEscapable_text(body)
+	{
+		return `(@text[${body.desugar()}])`;
 	},
 
 	

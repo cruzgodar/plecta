@@ -67,7 +67,7 @@ ${body}
 
 	link(displayText, url)
 	{
-		return r`<a href="${url}">${displayText}</a>`;
+		return r`<a href="${url.replaceAll(/"/g, r`\"`)}">${displayText}</a>`;
 	},
 
 	code(body)
@@ -83,6 +83,11 @@ ${body}
 	inlineDisplayMath(body)
 	{
 		return r`$\displaystyle ${body}$`;
+	},
+
+	text(body)
+	{
+		return body;
 	},
 
 	$: "$",
@@ -190,6 +195,11 @@ ${body}
 	inlineDisplayMath(body)
 	{
 		return r`$\displaystyle ${body}$`;
+	},
+
+	text(body)
+	{
+		return body;
 	},
 
 	$: "$",
