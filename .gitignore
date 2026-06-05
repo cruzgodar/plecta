@@ -1,3 +1,8 @@
 /vscode-extension/node_modules
 vscode-extension/.vscode/settings.json
 vscode-extension/.vscodeignore
+
+# Vendored by build-and-install.sh from the repo root; not source of truth.
+vscode-extension/server/spruce.js
+vscode-extension/server/stdlib.js
+vscode-extension/*.vsix

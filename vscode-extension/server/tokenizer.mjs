@@ -1,4 +1,8 @@
-import { grammarFor } from "../../spruce.js";
+// spruce.js (and its stdlib.js dependency) live at the repo root, outside this
+// extension folder, so vsce can't package them from there. build-and-install.sh
+// vendors fresh copies into server/ before packaging; the dev host relies on the
+// same copies. Run that script once after cloning so these exist.
+import { grammarFor } from "./spruce.js";
 
 export const TOKEN_TYPES = [
 	"heading",
@@ -254,6 +258,17 @@ const handlers = {
 			const s = node.source.startIdx + offset;
 			emit(t, s, s + 1, "list");
 		}
+	},
+
+	// Raw HTML tags (`<div>`, `</p>`, ...) get the light-blue raw color (string).
+	// The rule allows leading whitespace, so start at the `<` so indentation isn't
+	// colored.
+	htmlTag(node, t) {
+		const offset = node.source.contents.indexOf("<");
+		if (offset >= 0) {
+			emit(t, node.source.startIdx + offset, node.source.endIdx, "string");
+		}
+		return true;
 	},
 };
 
