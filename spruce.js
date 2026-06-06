@@ -127,7 +127,7 @@ spruce {
     | unorderedList
     | orderedList
 	| htmlTag
-    | newline          // Needs to be above paragraph or else newlines will always lead to paragraphs
+    | (spaceOrTab* newline) --blankLine          // Needs to be above paragraph or else newlines will always lead to paragraphs
     | functionCallChunk
     | paragraph
   
