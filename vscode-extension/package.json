@@ -27,6 +27,11 @@
           "meta.math.block.latex": "latex",
           "meta.math.inline.latex": "latex"
         }
+      },
+      {
+        "scopeName": "spruce.embedded.js.injection",
+        "path": "./syntaxes/spruce-js.injection.tmLanguage.json",
+        "injectTo": ["source.spruce"]
       }
     ],
     "semanticTokenTypes": [

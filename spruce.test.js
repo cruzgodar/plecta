@@ -8,6 +8,13 @@ import { stdlib } from "./stdlib.js";
 // doesn't corrupt the TAP stream during unrelated failures.
 console.log = () => {};
 
+// The html/tex stdlib ship a default `document` post-compile hook that wraps
+// output in a full document shell. These tests assert on the compiled body, so
+// neutralize the defaults here; the dedicated document-hook tests install and
+// remove their own.
+delete stdlib.html.document;
+delete stdlib.tex.document;
+
 // Stdlib snippet that defines helpers reused across tests.
 const lib = `@@@html
 function id(x) { return x; }
@@ -107,7 +114,7 @@ test("block: declaration block matching scope makes its definitions available", 
 
 test("block: declaration block with non-matching scope is dropped", async () =>
 {
-	assert.equal(await compile("@@@tex\nignored body\n@@@\nplain", "html"), NL + "plain");
+	assert.equal(await compile("@@@tex\nignored body\n@@@\nplain", "html"), NL + "<p>plain</p>");
 });
 
 test("block: multi-scope declaration block, only matching scope runs", async () =>
@@ -133,64 +140,64 @@ test("block: declaration block alone produces empty output", async () =>
 
 test("inline: italic with *", async () =>
 {
-	assert.equal(await compile("*x*", "html"), "<em>x</em>");
+	assert.equal(await compile("*x*", "html"), "<p><em>x</em></p>");
 });
 
 test("inline: italic with _", async () =>
 {
-	assert.equal(await compile("_x_", "html"), "<em>x</em>");
+	assert.equal(await compile("_x_", "html"), "<p><em>x</em></p>");
 });
 
 test("inline: bold with **", async () =>
 {
-	assert.equal(await compile("**x**", "html"), "<strong>x</strong>");
+	assert.equal(await compile("**x**", "html"), "<p><strong>x</strong></p>");
 });
 
 test("inline: bold with __", async () =>
 {
-	assert.equal(await compile("__x__", "html"), "<strong>x</strong>");
+	assert.equal(await compile("__x__", "html"), "<p><strong>x</strong></p>");
 });
 
 test("inline: boldItalic with ***", async () =>
 {
-	assert.equal(await compile("***x***", "html"), "<strong><em>x</em></strong>");
+	assert.equal(await compile("***x***", "html"), "<p><strong><em>x</em></strong></p>");
 });
 
 test("inline: boldItalic with ___", async () =>
 {
-	assert.equal(await compile("___x___", "html"), "<strong><em>x</em></strong>");
+	assert.equal(await compile("___x___", "html"), "<p><strong><em>x</em></strong></p>");
 });
 
 test("inline: code", async () =>
 {
-	assert.equal(await compile("`code`", "html"), "<code>code</code>");
+	assert.equal(await compile("`code`", "html"), "<p><code>code</code></p>");
 });
 
 test("inline: math", async () =>
 {
-	assert.equal(await compile("$math$", "html"), "$math$");
+	assert.equal(await compile("$math$", "html"), "<p>$math$</p>");
 });
 
 test("inline: display math", async () =>
 {
-	assert.equal(await compile("$$disp$$", "html"), "$\\displaystyle disp$");
+	assert.equal(await compile("$$disp$$", "html"), "<p>$\\displaystyle disp$</p>");
 });
 
 test("inline: link", async () =>
 {
-	assert.equal(await compile("[t](u)", "html"), `<a href="u">t</a>`);
+	assert.equal(await compile("[t](u)", "html"), `<p><a href="u">t</a></p>`);
 });
 
 test("inline: link text parses inline elements", async () =>
 {
-	assert.equal(await compile("[**t**](u)", "html"), `<a href="u"><strong>t</strong></a>`);
+	assert.equal(await compile("[**t**](u)", "html"), `<p><a href="u"><strong>t</strong></a></p>`);
 });
 
 test("inline: paragraph with mixed inline forms", async () =>
 {
 	assert.equal(
 		await compile("alpha *e* beta **b** gamma", "html"),
-		"alpha <em>e</em> beta <strong>b</strong> gamma",
+		"<p>alpha <em>e</em> beta <strong>b</strong> gamma</p>",
 	);
 });
 
@@ -198,13 +205,13 @@ test("inline: repeated bold", async () =>
 {
 	assert.equal(
 		await compile("**a** **b** **c**", "html"),
-		"<strong>a</strong> <strong>b</strong> <strong>c</strong>",
+		"<p><strong>a</strong> <strong>b</strong> <strong>c</strong></p>",
 	);
 });
 
 test("inline: boundary case **a***b** (parser keeps trailing **b** as bold)", async () =>
 {
-	assert.equal(await compile("**a***b**", "html"), "**a*<strong>b</strong>");
+	assert.equal(await compile("**a***b**", "html"), "<p>**a*<strong>b</strong></p>");
 });
 
 
@@ -219,7 +226,7 @@ test("call: bare", async () =>
 
 test("call: wrapped", async () =>
 {
-	assert.equal(await compile(lib + "@(id [hi])", "html"), NL + "hi");
+	assert.equal(await compile(lib + "(@id [hi])", "html"), NL + "hi");
 });
 
 test("call: raw passes content through verbatim", async () =>
@@ -229,7 +236,7 @@ test("call: raw passes content through verbatim", async () =>
 
 test("call: escaped @ becomes literal @", async () =>
 {
-	assert.equal(await compile("\\@", "html"), "@");
+	assert.equal(await compile("@@", "html"), "@");
 });
 
 test("call: multiple parsed-block args", async () =>
@@ -239,7 +246,7 @@ test("call: multiple parsed-block args", async () =>
 
 test("call: nested calls regression - inner result reaches outer arg", async () =>
 {
-	assert.equal(await compile(lib + "@(up [@(up [hi])])", "html"), NL + "HI");
+	assert.equal(await compile(lib + "(@up [(@up [hi])])", "html"), NL + "HI");
 });
 
 test("call: function call inside a heading body", async () =>
@@ -249,7 +256,7 @@ test("call: function call inside a heading body", async () =>
 
 test("call: function call inside a bold span", async () =>
 {
-	assert.equal(await compile(lib + "**@up[hi]**", "html"), NL + "<strong>HI</strong>");
+	assert.equal(await compile(lib + "**@up[hi]**", "html"), NL + "<p><strong>HI</strong></p>");
 });
 
 test("call: function call inside a list item", async () =>
@@ -293,22 +300,22 @@ test("call: template-hostile arg, literal backtick in raw block (regression)", a
 // Escapes
 // ============================================================================
 
-test("escape: backslash @", async () => assert.equal(await compile("\\@", "html"), "@"));
-test("escape: backslash *", async () => assert.equal(await compile("\\*", "html"), "*"));
-test("escape: backslash _", async () => assert.equal(await compile("\\_", "html"), "_"));
-test("escape: backslash backtick", async () => assert.equal(await compile("\\`", "html"), "`"));
-test("escape: backslash [", async () => assert.equal(await compile("\\[", "html"), "["));
-test("escape: backslash ]", async () => assert.equal(await compile("\\]", "html"), "]"));
-test("escape: backslash <", async () => assert.equal(await compile("\\<", "html"), "<"));
+test("escape: @ escapes @", async () => assert.equal(await compile("@@", "html"), "@"));
+test("escape: @ escapes *", async () => assert.equal(await compile("@*", "html"), "*"));
+test("escape: @ escapes _", async () => assert.equal(await compile("@_", "html"), "_"));
+test("escape: @ escapes backtick", async () => assert.equal(await compile("@`", "html"), "`"));
+test("escape: @ escapes [", async () => assert.equal(await compile("@[", "html"), "["));
+test("escape: @ escapes ]", async () => assert.equal(await compile("@]", "html"), "]"));
+test("escape: @ escapes <", async () => assert.equal(await compile("@<", "html"), "<"));
 
-test("escape: backslash $ keeps the backslash (stdlib special-case)", async () =>
+test("escape: @$ yields a literal $ via the stdlib special-case", async () =>
 {
-	assert.equal(await compile("\\$", "html"), "\\$");
+	assert.equal(await compile("@$", "html"), "$");
 });
 
 test("escape: multiple escapes in one paragraph", async () =>
 {
-	assert.equal(await compile("a \\@ b \\* c", "html"), "a @ b * c");
+	assert.equal(await compile("a @@ b @* c", "html"), "<p>a @ b * c</p>");
 });
 
 
@@ -323,17 +330,17 @@ test("misc: empty input -> empty output", async () =>
 
 test("misc: single character", async () =>
 {
-	assert.equal(await compile("a", "html"), "a");
+	assert.equal(await compile("a", "html"), "<p>a</p>");
 });
 
 test("misc: plain text passes through", async () =>
 {
-	assert.equal(await compile("plain text", "html"), "plain text");
+	assert.equal(await compile("plain text", "html"), "<p>plain text</p>");
 });
 
 test("misc: two paragraphs preserve blank-line separator", async () =>
 {
-	assert.equal(await compile("p1\n\np2", "html"), "p1\n\np2");
+	assert.equal(await compile("p1\n\np2", "html"), "<p>p1</p>\n\n<p>p2</p>");
 });
 
 test("misc: raw HTML in a paragraph passes through untouched", async () =>
@@ -345,14 +352,14 @@ test("misc: HTML mid-paragraph passes through", async () =>
 {
 	assert.equal(
 		await compile("before <em>html</em> after", "html"),
-		"before <em>html</em> after",
+		"<p>before <em>html</em> after</p>",
 	);
 });
 
 test("misc: long line of plain characters", async () =>
 {
 	const long = "x".repeat(500);
-	assert.equal(await compile(long, "html"), long);
+	assert.equal(await compile(long, "html"), `<p>${long}</p>`);
 });
 
 
@@ -425,8 +432,8 @@ test("state: different inputs back-to-back don't leak state", async () =>
 
 test("state: nested calls then sugar", async () =>
 {
-	assert.equal(await compile(lib + "@(up [@(up [hi])])", "html"), NL + "HI");
-	assert.equal(await compile("**bold**", "html"), "<strong>bold</strong>");
+	assert.equal(await compile(lib + "(@up [(@up [hi])])", "html"), NL + "HI");
+	assert.equal(await compile("**bold**", "html"), "<p><strong>bold</strong></p>");
 });
 
 
@@ -436,7 +443,7 @@ test("state: nested calls then sugar", async () =>
 
 test("format: tex format uses tex stdlib", async () =>
 {
-	assert.equal(await compile("# X", "tex"), "\\chapter{X}");
+	assert.equal(await compile("# X", "tex"), "\\section{X}");
 });
 
 test("format: tex format applies tex sugar throughout", async () =>
@@ -457,6 +464,33 @@ test("format: unknown format is allowed (no stdlib defaults applied)", async () 
 	// User-defined declaration block under an unknown scope still runs and is usable.
 	const src = `@@@bogus\nfunction greet() { return "hello"; }\n@@@\n@greet`;
 	assert.equal(await compile(src, "bogus"), NL + "hello");
+});
+
+
+// ============================================================================
+// include()
+// ============================================================================
+
+test("include: makes every export callable by bare name", async () =>
+{
+	const src = `@@@html\nawait include("./testIncludeHelpers.js");\n@@@\n(@shout [hi]) (@wrap [x])`;
+	// Neither shout nor wrap is named anywhere in the document, yet both resolve.
+	assert.equal(await compile(src, "html"), NL + "<p>HI! [x]</p>");
+});
+
+test("include: is available regardless of output format", async () =>
+{
+	const src = `@@@tex\nawait include("./testIncludeHelpers.js");\n@@@\n(@shout [hi])`;
+	assert.equal(await compile(src, "tex"), NL + "HI!");
+});
+
+test("include: imported names do not leak onto globalThis after compile", async () =>
+{
+	const src = `@@@html\nawait include("./testIncludeHelpers.js");\n@@@\n(@shout [hi])`;
+	const had = Object.hasOwn(globalThis, "shout");
+	await compile(src, "html");
+	assert.equal(Object.hasOwn(globalThis, "shout"), had);
+	assert.equal(Object.hasOwn(globalThis, "include"), false);
 });
 
 
@@ -514,7 +548,7 @@ test("isolation: concurrent compiles do not corrupt each other", async () =>
 		compile("# C", "html"),
 	]);
 	assert.match(a, /<h1>A<\/h1>/);
-	assert.match(b, /\\chapter\{B\}/);
+	assert.match(b, /\\section\{B\}/);
 	assert.match(c, /<h1>C<\/h1>/);
 	// And the formats must not have cross-contaminated.
 	assert.doesNotMatch(a, /\\chapter/);
@@ -554,6 +588,6 @@ test("isolation: pre-existing globalThis entry is restored after compile", async
 
 test("isolation: user declaration block still overrides the stdlib name", async () =>
 {
-	const src = `@@@html\nfunction heading(n, body) { return "OVERRIDE:" + body; }\n@@@\n# X`;
+	const src = `@@@html\nfunction heading(body, n) { return "OVERRIDE:" + body; }\n@@@\n# X`;
 	assert.equal(await compile(src, "html"), NL + "OVERRIDE:X");
 });

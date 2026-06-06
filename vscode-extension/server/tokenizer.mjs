@@ -63,15 +63,19 @@ function bracketType(color) {
 // Emit the opening/closing delimiter terminals of a bracketed node, running
 // `collectBody` (which descends into the body) in between. Children are colored
 // one past this block; afterwards the level is reset so the next sibling is too.
-function emitBracketed(node, t, collectBody) {
+// `delimiterType` overrides the color of the delimiters themselves (used by
+// wrapped function calls to paint their parens like the function name) while
+// leaving the inner/sibling bracket-color sequencing untouched.
+function emitBracketed(node, t, collectBody, delimiterType) {
 	const open = node.children[0];
 	const close = node.children[node.children.length - 1];
 	const color = bracketColorCounter;
-	emit(t, open.source.startIdx, open.source.endIdx, bracketType(color));
+	const type = delimiterType ?? bracketType(color);
+	emit(t, open.source.startIdx, open.source.endIdx, type);
 	bracketColorCounter = color + 1;
 	collectBody();
 	bracketColorCounter = color + 1;
-	emit(t, close.source.startIdx, close.source.endIdx, bracketType(color));
+	emit(t, close.source.startIdx, close.source.endIdx, type);
 }
 
 // Rule handlers. Returning true means "fully handled, don't recurse into children";
@@ -175,9 +179,10 @@ const handlers = {
 		return true;
 	},
 
-	// `(@name[...])` — the wrapping parens are a bracket pair, so they take part
-	// in the sequential coloring (the paren first, then any inner blocks). We take
-	// over recursion to interleave open-bracket / body / close-bracket correctly.
+	// `(@name[...])` — the wrapping parens are painted like the function name
+	// (spruceFunction) rather than as a bracket pair, but inner blocks still take
+	// sequential bracket colors, so we take over recursion to interleave
+	// open-paren / @ / body / close-paren correctly.
 	functionCall_wrapped(node, t) {
 		emitBracketed(node, t, () => {
 			const atOffset = node.source.contents.indexOf("@");
@@ -186,7 +191,7 @@ const handlers = {
 				emit(t, s, s + 1, "spruceFunction");
 			}
 			for (const c of node.children) c.collect(t);
-		});
+		}, "spruceFunction");
 		return true;
 	},
 	functionCall_bare(node, t) {

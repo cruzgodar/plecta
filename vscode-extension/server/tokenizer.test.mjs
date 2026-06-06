@@ -123,6 +123,18 @@ test("wrapped (@name[body]) colors @ and name as spruceFunction", () => {
 	assert.equal(atTok.end - atTok.start, 1);
 });
 
+test("wrapped (@name[body]) colors its parens as spruceFunction, inner brackets stay bracket colors", () => {
+	const src = "(@f[x])";
+	const tokens = collectTokens(src);
+	const open = tokens.find(t => t.start === 0 && t.end === 1);
+	const close = tokens.find(t => t.start === src.length - 1 && t.end === src.length);
+	assert.equal(open.type, "spruceFunction", "open paren should be purple");
+	assert.equal(close.type, "spruceFunction", "close paren should be purple");
+	// The inner [ ] still take a sequential bracket color, not spruceFunction.
+	const innerOpen = tokens.find(t => src[t.start] === "[");
+	assert.ok(innerOpen.type.startsWith("bracket"));
+});
+
 test("link URL is highlighted as string", () => {
 	const tokens = collectTokens("[text](https://example.com)");
 	const strings = tokens.filter(t => t.type === "string");

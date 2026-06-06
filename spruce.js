@@ -734,7 +734,11 @@ const insertCodeOutputOperation = {
 
 	functionCall_escaped(_1, character)
 	{
-		return character.getCode();
+		// Final output pass: emit the literal character. Unlike getCode (which
+		// escapes for embedding in a generated template literal), this string is
+		// the output itself, so escaping here would leak a stray backslash for
+		// characters like ` that escapeForTemplate touches.
+		return character.sourceString;
 	},
 
 	rawBlock(_1, body, _2)
