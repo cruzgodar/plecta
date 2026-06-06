@@ -249,6 +249,18 @@ test("call: nested calls regression - inner result reaches outer arg", async () 
 	assert.equal(await compile(lib + "(@up [(@up [hi])])", "html"), NL + "HI");
 });
 
+test("call: sibling parsed-block args keep their own content (no id collision)", async () =>
+{
+	// Each [[ ... ]] is re-matched as a fresh document, so its nested paragraph
+	// calls used to come back with body-relative (colliding) ids — the last
+	// block's paragraphs overwrote every other block's. Each arg must render its
+	// own multi-paragraph content.
+	assert.equal(
+		await compile(lib + "(@join [[first A\n\nsecond A]] [[first B\n\nsecond B]])", "html"),
+		NL + "<p>first A</p>\n\n<p>second A</p>,<p>first B</p>\n\n<p>second B</p>",
+	);
+});
+
 test("call: function call inside a heading body", async () =>
 {
 	assert.equal(await compile(lib + "# @up[hello]", "html"), NL + "<h1>HELLO</h1>");

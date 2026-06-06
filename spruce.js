@@ -561,6 +561,13 @@ const desugarOperation = {
 // so the host's `module.__spruceOutput` read still resolves.
 let codeToExecute = "";
 let nextGetCodeId = 0;
+// parsedBlock re-matches its body as a fresh document (the grammar stores it as
+// raw text), so nested calls come back with startIdx relative to that body —
+// 0-based, and thus colliding across sibling parsed-block arguments. We add this
+// running offset (the body's global start, accumulated through nesting) to every
+// id so each call recovers its true startIdx in the desugared document and stays
+// unique. Reset by getCode(); pushed/popped around each re-match in parsedBlock.
+let getCodeOffset = 0;
 let locationsByStartIdx = {};
 let nextGetCodeDeclarationId = 0;
 let declarationBlockRanges = [];
@@ -602,7 +609,7 @@ const getCodeOperation = {
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
-		const startIdx = this.source.startIdx;
+		const startIdx = this.source.startIdx + getCodeOffset;
 		const id = JSON.stringify(startIdx);
 
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
@@ -627,7 +634,7 @@ const getCodeOperation = {
 
 	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
 	{
-		const startIdx = this.source.startIdx;
+		const startIdx = this.source.startIdx + getCodeOffset;
 		const id = JSON.stringify(startIdx);
 
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
@@ -676,7 +683,16 @@ const getCodeOperation = {
 			throw new Error(inner.message);
 		}
 
-		return semantics(inner).getCode();
+		// The re-match restarts startIdx at 0, so shift ids by the body's global
+		// start (relative to the current source, itself already shifted for nested
+		// blocks) and restore afterward. This recovers each nested call's true
+		// startIdx in the desugared document, keeping ids unique across siblings.
+		const saved = getCodeOffset;
+		getCodeOffset = saved + body.source.startIdx;
+		const code = semantics(inner).getCode();
+		getCodeOffset = saved;
+
+		return code;
 	},
 
 	parsedInlineBlock(_1, body, _2)
@@ -778,6 +794,7 @@ function getCode(matchResult, outputFormat)
 {
 	codeToExecute = "";
 	nextGetCodeId = 0;
+	getCodeOffset = 0;
 	locationsByStartIdx = {};
 	nextGetCodeDeclarationId = 0;
 	declarationBlockRanges = [];
