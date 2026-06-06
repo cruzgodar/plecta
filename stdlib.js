@@ -209,3 +209,32 @@ ${body}
 
 
 export const stdlib = { html, tex };
+
+
+
+// `include("./helpers.js")` is the document-level analog of latex's `\input`:
+// it imports every export of the target module and makes each callable by bare
+// name, without naming them one by one. It works the same way the stdlib does —
+// bare identifiers in a declaration block fall through to globalThis — so the
+// imported names resolve exactly like built-ins for the rest of the compile.
+//
+// This is format-independent, so spruce splats it for every output format. The
+// `resolveSpecifier` and `setGlobal` dependencies are injected by spruce.js
+// (the resolver mirrors the absolute-import rerouting in importHooks.js;
+// setGlobal records prior globalThis state so the names are restored when
+// compile() returns). `default` is skipped — it isn't a usable bare name.
+export function makeInclude(resolveSpecifier, setGlobal)
+{
+	return async function include(specifier)
+	{
+		const module = await import(resolveSpecifier(specifier));
+
+		for (const [name, value] of Object.entries(module))
+		{
+			if (name === "default") continue;
+			setGlobal(name, value);
+		}
+
+		return module;
+	};
+}
