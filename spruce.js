@@ -128,12 +128,11 @@ spruce {
   
   
   
-  // We include spaceOrTab* here so we can extract the leading indentation
-  unorderedList = spaceOrTab* unorderedItem (newline unorderedItem)* &(newline | end)
-  unorderedItem = spaceOrTab* "-" spaceOrTab+ inline<~(newline | end) any>+
+  unorderedList = spaceOrTab* unorderedItem (newline space* unorderedItem)* &(newline | end)
+  unorderedItem = "-" spaceOrTab+ inline<~(newline | end) any>+
 
-  orderedList = spaceOrTab* orderedItem (newline orderedItem)* &(newline | end)
-  orderedItem = spaceOrTab* orderedItemStarter spaceOrTab+ inline<~(newline | end) any>+
+  orderedList = spaceOrTab* orderedItem (newline space* orderedItem)* &(newline | end)
+  orderedItem = orderedItemStarter spaceOrTab+ inline<~(newline | end) any>+
   orderedItemStarter
     = (digit+ ".") --numeric
     | "+"          --plus
@@ -320,7 +319,7 @@ const desugarOperation = {
 		return this.sourceString;
 	},
 
-	unorderedList(_1, firstItem, _2, restItems, _3)
+	unorderedList(_1, firstItem, _2, _3, restItems, _4)
 	{
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
@@ -328,12 +327,12 @@ const desugarOperation = {
 		return `(@unorderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
-	unorderedItem(_1, _2, _3, body)
+	unorderedItem(_1, _2, body)
 	{
 		return body.desugar();
 	},
 
-	orderedList(_1, firstItem, _2, restItems, _3)
+	orderedList(_1, firstItem, _2, _3, restItems, _4)
 	{
 		captureFunctionCall(this);
 		const restItemsWrapped = restItems.children.map(item => `[${item.desugar()}]`).join("");
@@ -341,7 +340,7 @@ const desugarOperation = {
 		return `(@orderedList[${firstItem.desugar()}]${restItemsWrapped})`;
 	},
 
-	orderedItem(_1, _2, _3, body)
+	orderedItem(_1, _2, body)
 	{
 		return body.desugar();
 	},
