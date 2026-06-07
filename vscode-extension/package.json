@@ -43,6 +43,8 @@
       { "id": "codeBlock", "description": "Fenced code block content" },
       { "id": "list", "description": "List marker (- or 1.)" },
       { "id": "spruceFunction", "description": "@function call marker and name" },
+      { "id": "escape", "description": "Escape sequence (@ plus the escaped character)" },
+      { "id": "invalid", "description": "Invalid @ that is not a valid function call" },
       { "id": "linkText", "description": "Link display text inside [ ]" },
       { "id": "marker", "description": "Inline syntax delimiter (asterisks, underscores)" },
       { "id": "languageTag", "description": "Language identifier after a ``` fence" },
@@ -64,6 +66,7 @@
           "string": ["variable"],
           "list": ["markup.heading"],
           "spruceFunction": ["keyword"],
+          "escape": ["constant.character.escape"],
           "languageTag": ["entity.name.type"]
         }
       }
@@ -75,6 +78,7 @@
           "*.bold:spruce": { "bold": true },
           "*.italic:spruce": { "italic": true },
           "spruceFunction:spruce": { "foreground": "#AA8BD3", "bold": true },
+          "invalid:spruce": { "foreground": "#F44747", "bold": true },
           "linkText:spruce": { "foreground": "#94D893" },
           "marker:spruce": { "foreground": "#808080BF" },
           "bracket1:spruce": { "foreground": "#FFD700" },

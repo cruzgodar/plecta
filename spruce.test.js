@@ -385,6 +385,12 @@ test("misc: HTML mid-paragraph passes through", async () =>
 	);
 });
 
+test("misc: function call inside an HTML tag is interpreted", async () =>
+{
+	const src = `${lib}<div class="@up [hi]">`;
+	assert.equal(await compile(src, "html"), `${NL}<div class="HI">`);
+});
+
 test("misc: long line of plain characters", async () =>
 {
 	const long = "x".repeat(500);
@@ -410,6 +416,20 @@ test("error: undefined function call rejects and logs red ANSI with the name", a
 	assert.match(combined, /\x1b\[1;31m\s*1\x1b\[0m/, "line 1 should be highlighted");
 });
 
+test("error: context still renders when a --root is in play", async (t) =>
+{
+	// Regression: with a root, the fragment is imported with a `?spruceRoot=...`
+	// query string, so the stack frame reads `.mjs?spruceRoot=/x:LINE:COL`. The
+	// fragment regex must skip that query or no context renders at all.
+	const logs = [];
+	t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
+
+	await assert.rejects(compile("hi\n\n@f\n\nbye", "html", null, "/tmp"));
+
+	const combined = logs.join("\n");
+	assert.match(combined, /\x1b\[1;31m\s*3\x1b\[0m/, "line 3 (the @f call) should be highlighted even with a root");
+});
+
 test("error: undefined function error highlights its own line, not a later one", async (t) =>
 {
 	// Regression: generated @text/@paragraph calls were not captured during
@@ -423,6 +443,20 @@ test("error: undefined function error highlights its own line, not a later one",
 	const combined = logs.join("\n");
 	assert.match(combined, /\x1b\[1;31m\s*3\x1b\[0m/, "line 3 (the @bad call) should be highlighted");
 	assert.doesNotMatch(combined, /\x1b\[1;31m\s*5\x1b\[0m/, "line 5 must not be highlighted");
+});
+
+test("error: undefined function nested in a [[ ]] parsed block maps to its real line", async (t) =>
+{
+	// parsedBlock re-matches its body as a fresh document, so without a line-base
+	// offset the captured location would read line 1. @f is on line 3 here.
+	const logs = [];
+	t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
+
+	await assert.rejects(compile("a\n\n@bold[[@f]]\n\nb", "html"));
+
+	const combined = logs.join("\n");
+	assert.match(combined, /\x1b\[1;31m\s*3\x1b\[0m/, "line 3 (the nested @f) should be highlighted");
+	assert.doesNotMatch(combined, /\x1b\[1;31m\s*1\x1b\[0m/, "line 1 must not be highlighted");
 });
 
 test("error: error inside declaration block body maps to original-source line", async (t) =>
@@ -536,6 +570,15 @@ test("raw: parsed-block arguments to @-calls are still parsed", async () =>
 	// inside it is interpreted even though the surrounding document is raw.
 	const out = await compile("@bold[**inner**]", "html", null, null, true);
 	assert.equal(out, "<strong><strong>inner</strong></strong>");
+});
+
+test("raw: declaration blocks are still interpreted", async () =>
+{
+	// The @@@ block defines `shout` (and is stripped from output); markup stays
+	// literal, but the @shout call runs.
+	const src = `@@@html\nfunction shout(x) { return x.toUpperCase(); }\n@@@\n# literal @shout[hi]`;
+	const out = await compile(src, "html", null, null, true);
+	assert.equal(out, "\n# literal HI");
 });
 
 

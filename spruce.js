@@ -120,10 +120,11 @@ spruce {
   document = chunk*
 
   // Raw-mode start rule (see compile's raw flag): the whole document is raw,
-  // so only function calls are interpreted and every other character is literal,
-  // exactly as inside a @{} raw block. functionCall is tried first so @-calls win
-  // over the catch-all any.
-  rawDocument = (functionCall | any)*
+  // so only declaration blocks and function calls are interpreted and every other
+  // character is literal, exactly as inside a @{} raw block. declarationBlock is
+  // tried first (its @@@ opener would otherwise be eaten as an escaped @), then
+  // functionCall, so @-calls win over the catch-all any.
+  rawDocument = (declarationBlock | functionCall | any)*
 
   chunk
     = heading
@@ -182,7 +183,7 @@ spruce {
 
 
 
-  htmlTag = spaceOrTab* "<" (~newline any)*
+  htmlTag = spaceOrTab* "<" (functionCall | (~newline any))*
   
   
   
@@ -325,9 +326,25 @@ let functionCallLocations = {};
 
 let declarationBlockOriginalLines = [];
 
+// parsedBlock ([[ ]]) re-matches its body as a fresh document, so getLineAndColumn
+// on nodes inside that re-match is relative to the body substring (its line 1),
+// not the original source. This is the line-based analog of getCodeOffset: it
+// holds the original-source line number that the current re-match's line 1 maps
+// to, and accumulates through nesting. Reset by desugar(); pushed/popped around
+// each re-match in parsedBlock. captureFunctionCall folds it into stored lineNums
+// so runtime errors point at the real source line.
+let desugarLineBase = 1;
+
+function globalizeLineNum(localLineNum)
+{
+	return desugarLineBase + localLineNum - 1;
+}
+
 function captureFunctionCall(node)
 {
-	functionCallLocations[nextFunctionCallId++] = node.source.getLineAndColumn();
+	const location = node.source.getLineAndColumn();
+	location.lineNum = globalizeLineNum(location.lineNum);
+	functionCallLocations[nextFunctionCallId++] = location;
 }
 
 // Convert all syntactic sugar to function calls, escaping characters as necessary.
@@ -364,7 +381,7 @@ const desugarOperation = {
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
-		declarationBlockOriginalLines.push(body.source.getLineAndColumn().lineNum);
+		declarationBlockOriginalLines.push(globalizeLineNum(body.source.getLineAndColumn().lineNum));
 		return this.sourceString;
 	},
 
@@ -516,7 +533,15 @@ const desugarOperation = {
 			throw new Error(inner.message);
 		}
 
-		return `${start.desugar()}${semantics(inner).desugar()}${end.desugar()}`;
+		// Shift the line base so nested captures globalize correctly: the re-match's
+		// line 1 corresponds to the original-source line where this body begins.
+		// Mirrors getCode's getCodeOffset bookkeeping, but line-based. Restore after.
+		const savedBase = desugarLineBase;
+		desugarLineBase = globalizeLineNum(body.source.getLineAndColumn().lineNum);
+		const innerDesugared = semantics(inner).desugar();
+		desugarLineBase = savedBase;
+
+		return `${start.desugar()}${innerDesugared}${end.desugar()}`;
 	},
 
 	parsedInlineBlock(start, body, end)
@@ -804,6 +829,7 @@ function desugar(matchResult)
 	nextFunctionCallId = 0;
 	functionCallLocations = {};
 	declarationBlockOriginalLines = [];
+	desugarLineBase = 1;
 	return semantics(matchResult).desugar();
 }
 
@@ -866,7 +892,10 @@ function renderContext(source, errorLine, highlightContent)
 function logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName)
 {
 	const stack = ex.stack || `${ex}`;
-	const fragmentMatch = stack.match(/\.__fragments_[^:]+\.mjs:(\d+):\d+/);
+	// With --root the fragment is imported with a `?spruceRoot=...` query string,
+	// so the stack frame reads `.__fragments_<uuid>.mjs?spruceRoot=/x:LINE:COL`.
+	// Allow (and skip) that optional query between `.mjs` and the line:col.
+	const fragmentMatch = stack.match(/\.__fragments_[^:?]+\.mjs(?:\?[^:]*)?:(\d+):\d+/);
 
 	if (!fragmentMatch) return false;
 

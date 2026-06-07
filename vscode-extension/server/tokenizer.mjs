@@ -13,6 +13,8 @@ export const TOKEN_TYPES = [
 	"codeBlock",
 	"list",
 	"spruceFunction",
+	"escape",
+	"invalid",
 	"string",
 	"linkText",
 	"operator",
@@ -231,13 +233,20 @@ const handlers = {
 	functionCall_raw(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 	},
-	// Escape sequences (@] @} @@ etc.): the @ is a keyword like any other
-	// single @, and the escaped character renders as raw (string).
+	// Escape sequences (@] @} @@ etc.): both the escaping @ and the escaped
+	// character take the light-orange escape color, so the whole 2-char sequence
+	// reads as one escape unit.
 	functionCall_escaped(node, t) {
-		const s = node.source.startIdx;
-		const e = node.source.endIdx;
-		emit(t, s, s + 1, "spruceFunction");
-		emit(t, s + 1, e, "string");
+		emit(t, node.source.startIdx, node.source.endIdx, "escape");
+		return true;
+	},
+
+	// A bare @ that isn't a valid call (e.g. "@" followed by a space): the
+	// compiler rejects it, so flag the whole sequence as invalid. Matched inside
+	// raw blocks too (functionCall is part of the raw grammar), so it surfaces in
+	// both parsed and raw contexts.
+	functionCall_invalid(node, t) {
+		emit(t, node.source.startIdx, node.source.endIdx, "invalid");
 		return true;
 	},
 
@@ -307,14 +316,16 @@ const handlers = {
 		}
 	},
 
-	// Raw HTML tags (`<div>`, `</p>`, ...) get the light-blue raw color (string).
-	// The rule allows leading whitespace, so start at the `<` so indentation isn't
-	// colored.
+	// Raw HTML tags (`<div>`, `</p>`, ...) get the light-blue raw color (string),
+	// EXCEPT for nested @funcs (which the compiler interprets) — those keep their
+	// function coloring, like any other raw environment. The rule allows leading
+	// whitespace, so start at the `<` so indentation isn't colored. The body is
+	// children[2] (after the optional whitespace and the `<`).
 	htmlTag(node, t) {
 		const offset = node.source.contents.indexOf("<");
-		if (offset >= 0) {
-			emit(t, node.source.startIdx + offset, node.source.endIdx, "string");
-		}
+		if (offset < 0) return true;
+		const start = node.source.startIdx + offset;
+		emitRawBody(t, node.children[2], start, node.source.endIdx, "string");
 		return true;
 	},
 };

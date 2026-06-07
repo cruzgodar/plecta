@@ -141,16 +141,38 @@ test("link URL is highlighted as string", () => {
 	assert.ok(strings.find(t => t.start === 7 && t.end === 26));
 });
 
-test("escaped @x emits keyword @ and string escaped char", () => {
+test("escaped @x colors the whole @ + char sequence as escape", () => {
 	const src = "a @] b";
 	const tokens = collectTokens(src);
 	const atIdx = src.indexOf("@");
-	const fn = tokens.find(t => t.type === "spruceFunction" && t.start === atIdx);
-	assert.ok(fn);
-	assert.equal(fn.end, atIdx + 1);
-	const str = tokens.find(t => t.type === "string" && t.start === atIdx + 1);
-	assert.ok(str);
-	assert.equal(str.end, atIdx + 2);
+	const esc = tokens.find(t => t.type === "escape" && t.start === atIdx);
+	assert.ok(esc, "the escape sequence is one escape token");
+	// Covers both the @ and the escaped character.
+	assert.equal(esc.end, atIdx + 2);
+	// No part of it is colored as a function or raw string.
+	assert.ok(!tokens.find(t => t.type === "spruceFunction" && t.start === atIdx));
+});
+
+test("invalid @ (followed by a non-identifier) is colored invalid", () => {
+	const src = "foo @ .";
+	const tokens = collectTokens(src);
+	const inv = tokens.find(t => t.type === "invalid");
+	assert.ok(inv, "the stray @ is flagged invalid");
+	assert.equal(src[inv.start], "@");
+});
+
+test("invalid @ inside a raw block is also colored invalid", () => {
+	const src = "@{ @ ) }";
+	const inv = collectTokens(src).find(t => t.type === "invalid");
+	assert.ok(inv, "invalid @ surfaces in raw contexts too");
+});
+
+test("function call inside an HTML tag is highlighted as a function", () => {
+	const src = "<div class=\"@cls\">";
+	const fns = collectTokens(src).filter(t => t.type === "spruceFunction");
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "cls"), "the @func name is highlighted");
+	// The surrounding tag text is still raw-colored.
+	assert.ok(collectTokens(src).find(t => t.type === "string"));
 });
 
 test("raw block content is string, with function-call gaps preserved", () => {
