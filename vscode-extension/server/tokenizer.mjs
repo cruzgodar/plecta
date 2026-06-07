@@ -78,6 +78,28 @@ function emitBracketed(node, t, collectBody, delimiterType) {
 	emit(t, close.source.startIdx, close.source.endIdx, type);
 }
 
+// Raw environments (code blocks, inline code, math, @{} raw blocks) render their
+// content as a single flat color, EXCEPT for nested @function calls, which the
+// compiler still interprets and which therefore stay purple+bold like in parsed
+// content. We let the body's children emit their own tokens first (so nested
+// @funcs keep their function coloring), then — when `fillType` is given — paint
+// the leftover gaps with that raw color. Math passes no `fillType` so its body
+// stays under the embedded LaTeX grammar; only the @funcs get semantic tokens.
+function emitRawBody(t, bodyNode, start, end, fillType) {
+	const inner = [];
+	bodyNode.collect(inner);
+	inner.sort((a, b) => a.start - b.start);
+	if (fillType) {
+		let cursor = start;
+		for (const tok of inner) {
+			if (tok.start > cursor) emit(t, cursor, tok.start, fillType);
+			if (tok.end > cursor) cursor = tok.end;
+		}
+		if (cursor < end) emit(t, cursor, end, fillType);
+	}
+	for (const tok of inner) t.push(tok);
+}
+
 // Rule handlers. Returning true means "fully handled, don't recurse into children";
 // returning undefined falls through to recursing into all children.
 const handlers = {
@@ -103,11 +125,12 @@ const handlers = {
 
 	code(node, t) {
 		// Backticks share the light-blue raw color (string), not the gray
-		// marker color used for *_ delimiters.
+		// marker color used for *_ delimiters. The body is raw, but nested @funcs
+		// (which the compiler still interprets) keep their function coloring.
 		const s = node.source.startIdx;
 		const e = node.source.endIdx;
 		emit(t, s, s + 1, "string");
-		emit(t, s + 1, e - 1, "inlineCode");
+		emitRawBody(t, node.children[1], s + 1, e - 1, "inlineCode");
 		emit(t, e - 1, e, "string");
 		return true;
 	},
@@ -130,7 +153,8 @@ const handlers = {
 
 		emit(t, s + openIdx, s + openIdx + 3, "string");
 		if (langEnd > langStart) emit(t, s + langStart, s + langEnd, "languageTag");
-		emit(t, s + langEnd, s + closeIdx, "codeBlock");
+		// The body is raw, but nested @funcs keep their function coloring.
+		emitRawBody(t, node.children[6], s + langEnd, s + closeIdx, "codeBlock");
 		emit(t, s + closeIdx, s + closeIdx + 3, "string");
 		return true;
 	},
@@ -142,6 +166,9 @@ const handlers = {
 		const s = node.source.startIdx;
 		const e = node.source.endIdx;
 		emit(t, s, s + 1, "string");
+		// No fill type: leave the body to the embedded LaTeX grammar, but still
+		// surface any nested @funcs (which the compiler interprets) as functions.
+		emitRawBody(t, node.children[1], s + 1, e - 1, null);
 		emit(t, e - 1, e, "string");
 		return true;
 	},
@@ -149,6 +176,7 @@ const handlers = {
 		const s = node.source.startIdx;
 		const e = node.source.endIdx;
 		emit(t, s, s + 2, "string");
+		emitRawBody(t, node.children[1], s + 2, e - 2, null);
 		emit(t, e - 2, e, "string");
 		return true;
 	},
@@ -159,6 +187,9 @@ const handlers = {
 		const closeIdx = text.lastIndexOf("$$");
 		if (openIdx < 0 || closeIdx <= openIdx) return true;
 		emit(t, s + openIdx, s + openIdx + 2, "string");
+		// No fill type: the body stays under the embedded LaTeX grammar; only
+		// nested @funcs get semantic tokens.
+		emitRawBody(t, node.children[4], s + openIdx + 2, s + closeIdx, null);
 		emit(t, s + closeIdx, s + closeIdx + 2, "string");
 		return true;
 	},
@@ -254,19 +285,7 @@ const handlers = {
 	rawBlock(node, t) {
 		emitBracketed(node, t, () => {
 			const body = node.children[1];
-			const inner = [];
-			body.collect(inner);
-			inner.sort((a, b) => a.start - b.start);
-
-			const start = body.source.startIdx;
-			const end = body.source.endIdx;
-			let cursor = start;
-			for (const tok of inner) {
-				if (tok.start > cursor) emit(t, cursor, tok.start, "string");
-				if (tok.end > cursor) cursor = tok.end;
-			}
-			if (cursor < end) emit(t, cursor, end, "string");
-			for (const tok of inner) t.push(tok);
+			emitRawBody(t, body, body.source.startIdx, body.source.endIdx, "string");
 		});
 		return true;
 	},

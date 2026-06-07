@@ -410,6 +410,21 @@ test("error: undefined function call rejects and logs red ANSI with the name", a
 	assert.match(combined, /\x1b\[1;31m\s*1\x1b\[0m/, "line 1 should be highlighted");
 });
 
+test("error: undefined function error highlights its own line, not a later one", async (t) =>
+{
+	// Regression: generated @text/@paragraph calls were not captured during
+	// desugar, so getCode's call index drifted and the error was attributed to a
+	// later line. Here @bad is on line 3; the highlighted line must be 3.
+	const logs = [];
+	t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
+
+	await assert.rejects(compile("first line\n\n@bad[x]\n\nlast line", "html"));
+
+	const combined = logs.join("\n");
+	assert.match(combined, /\x1b\[1;31m\s*3\x1b\[0m/, "line 3 (the @bad call) should be highlighted");
+	assert.doesNotMatch(combined, /\x1b\[1;31m\s*5\x1b\[0m/, "line 5 must not be highlighted");
+});
+
 test("error: error inside declaration block body maps to original-source line", async (t) =>
 {
 	const logs = [];
@@ -493,6 +508,34 @@ test("format: unknown format is allowed (no stdlib defaults applied)", async () 
 	// User-defined declaration block under an unknown scope still runs and is usable.
 	const src = `@@@bogus\nfunction greet() { return "hello"; }\n@@@\n@greet`;
 	assert.equal(await compile(src, "bogus"), NL + "hello");
+});
+
+
+// ============================================================================
+// Raw mode (compile's `raw` flag / CLI -r|--raw)
+// ============================================================================
+
+test("raw: markup is left literal, only @-calls are interpreted", async () =>
+{
+	// In raw mode the whole document behaves like the body of @{}: headings and
+	// emphasis stay literal, but @bold still runs.
+	const out = await compile("# not a heading\n**not bold** @bold[but this is]", "html", null, null, true);
+	assert.equal(out, "# not a heading\n**not bold** <strong>but this is</strong>");
+});
+
+test("raw: same source differs from normal mode", async () =>
+{
+	const src = "# H\n";
+	assert.equal(await compile(src, "html"), "<h1>H</h1>\n");
+	assert.equal(await compile(src, "html", null, null, true), "# H\n");
+});
+
+test("raw: parsed-block arguments to @-calls are still parsed", async () =>
+{
+	// The [ ] argument of a raw-mode @-call is a parsed inline block, so emphasis
+	// inside it is interpreted even though the surrounding document is raw.
+	const out = await compile("@bold[**inner**]", "html", null, null, true);
+	assert.equal(out, "<strong><strong>inner</strong></strong>");
 });
 
 

@@ -118,7 +118,13 @@ function buildGrammarSource(maxHashes)
 	return String.raw`
 spruce {
   document = chunk*
-  
+
+  // Raw-mode start rule (see compile's raw flag): the whole document is raw,
+  // so only function calls are interpreted and every other character is literal,
+  // exactly as inside a @{} raw block. functionCall is tried first so @-calls win
+  // over the catch-all any.
+  rawDocument = (functionCall | any)*
+
   chunk
     = heading
     | codeBlock
@@ -440,6 +446,11 @@ const desugarOperation = {
 
 	inlineWithoutEscapable_text(body)
 	{
+		// Must capture here even though @text is generated rather than written by
+		// the user: getCode counts every wrapped/bare call it walks in the desugared
+		// tree (including this one), so skipping the capture would shift every
+		// subsequent call's location by one and misattribute runtime errors.
+		captureFunctionCall(this);
 		return `(@text[${body.desugar()}])`;
 	},
 
@@ -952,8 +963,12 @@ ${captureOverrides}`;
 	{
 		await unlink(path).catch(() => {});
 		pendingCleanup.delete(path);
-		logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName);
-		throw new Error(`${ex}`);
+		const rendered = logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName);
+		const error = new Error(`${ex}`);
+		// Tell the CLI whether renderContext already printed the offending line, so
+		// it can suppress the noisy JS stack and just exit when we've shown context.
+		error.spruceContextRendered = rendered;
+		throw error;
 	}
 }
 
@@ -974,14 +989,14 @@ process.on("SIGINT", () => process.exit(130))
 // access. Chaining keeps the public API a plain async function.
 let compileQueue = Promise.resolve();
 
-export function compile(input, outputFormat, filePath = null, root = null)
+export function compile(input, outputFormat, filePath = null, root = null, raw = false)
 {
-	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, root));
+	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, root, raw));
 	compileQueue = next.catch(() => {});
 	return next;
 }
 
-async function _compileImpl(input, outputFormat, filePath, root)
+async function _compileImpl(input, outputFormat, filePath, root, raw)
 {
 	// Snapshot the keys we're about to splat so we can restore on the way out.
 	// Users still override behavior by declaring/importing the name in their
@@ -1019,8 +1034,13 @@ async function _compileImpl(input, outputFormat, filePath, root)
 		// grammar parses both the original input and the desugared output.
 		useGrammar(maxHashDepth(input));
 
-		const desugared = desugar(spruce.match(input));
-		const desugaredMatch = spruce.match(desugared);
+		// In raw mode the whole document is treated as raw content (as if wrapped in
+		// @{}): only @-calls are interpreted, everything else is literal. Both the
+		// initial match and the post-desugar re-match use the rawDocument start rule
+		// so the desugared output is re-parsed under the same raw semantics.
+		const startRule = raw ? "rawDocument" : "document";
+		const desugared = desugar(spruce.match(input, startRule));
+		const desugaredMatch = spruce.match(desugared, startRule);
 		const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
 		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName, root);
 		let result = insertCodeOutput(desugaredMatch, __spruceOutput);
@@ -1060,6 +1080,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	const positional = [];
 	let formatOverride = null;
 	let rootOverride = null;
+	let rawMode = false;
 
 	for (let i = 0; i < argv.length; i++)
 	{
@@ -1068,9 +1089,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		{
 			formatOverride = argv[++i];
 		}
-		else if (arg === "-r" || arg === "--root")
+		else if (arg === "--root")
 		{
 			rootOverride = argv[++i];
+		}
+		else if (arg === "-r" || arg === "--raw")
+		{
+			rawMode = true;
 		}
 		else
 		{
@@ -1082,7 +1107,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 
 	if (!inputPath || !outputPath)
 	{
-		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--root <dir>]\n");
+		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [--root <dir>] [-r|--raw]\n");
 		process.exit(1);
 	}
 
@@ -1091,9 +1116,20 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	const root = rootOverride ? resolvePath(rootOverride) : null;
 
 	const input = await readFile(inputPath, "utf-8");
-	// Pass the absolute input path so post-compile hooks (e.g. `document`) get a
-	// stable, fully-qualified path rather than whatever relative form the CLI
-	// was invoked with.
-	const result = await compile(input, outputFormat, resolvePath(inputPath), root);
-	await writeFile(outputPath, result);
+	try
+	{
+		// Pass the absolute input path so post-compile hooks (e.g. `document`) get a
+		// stable, fully-qualified path rather than whatever relative form the CLI
+		// was invoked with.
+		const result = await compile(input, outputFormat, resolvePath(inputPath), root, rawMode);
+		await writeFile(outputPath, result);
+	}
+	catch (ex)
+	{
+		// renderContext already printed the offending source line for runtime
+		// errors; in that case skip the noisy JS stack and just fail. Otherwise
+		// (parse errors, missing files, ...) surface the message.
+		if (!ex.spruceContextRendered) process.stderr.write(`${ex.message ?? ex}\n`);
+		process.exit(1);
+	}
 }

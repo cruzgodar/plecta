@@ -170,6 +170,32 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
+test("function call inside a code block is highlighted as a function", () => {
+	const src = "```\nlet x = @foo[1]\n```\n";
+	const tokens = collectTokens(src);
+	const fns = tokens.filter(t => t.type === "spruceFunction");
+	const atIdx = src.indexOf("@");
+	assert.ok(fns.find(t => t.start === atIdx && t.end === atIdx + 1), "the @ is a function token");
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "foo"), "the name is a function token");
+	// Surrounding raw text is still codeBlock-colored, never overlapping a function token.
+	const code = tokens.filter(t => t.type === "codeBlock");
+	for (const c of code) for (const f of fns) {
+		assert.ok(!(c.start < f.end && f.start < c.end), "no overlap between codeBlock and function");
+	}
+});
+
+test("function call inside inline code is highlighted as a function", () => {
+	const src = "`code @bar[2] here`";
+	const fns = collectTokens(src).filter(t => t.type === "spruceFunction");
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "bar"));
+});
+
+test("function call inside $math$ is highlighted as a function", () => {
+	const src = "$x + @f[y]$";
+	const fns = collectTokens(src).filter(t => t.type === "spruceFunction");
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "f"));
+});
+
 test("parsed block body is highlighted as a full document", () => {
 	const src = "@f[[# Heading\n\n**bold** and @g[x]]]";
 	const tokens = collectTokens(src);
