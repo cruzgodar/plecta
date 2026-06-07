@@ -206,7 +206,13 @@ spruce {
   math = "$" ~"$" raw<~"$" ~doubleNewline any>+ "$" ~"$"
   inlineDisplayMath = "$$" raw<~"$$" ~doubleNewline any>+ "$$"
 
-  inline<allowed> = parsedBlockEscapable | inlineWithoutEscapable<allowed>
+  // A run of text desugars to (@text[...]) and is later re-parsed, so literal
+  // [ ] in prose would collide with that argument's own delimiters (or, for a
+  // leading [, form a spurious [[ block opener). The text rule excludes [ ] so
+  // they fall through to parsedBlockEscapable here, which desugars them to @[/@]
+  // — a desugaring action rather than a string rewrite. inlineWithoutEscapable
+  // comes first so link (which also opens with [) still wins over the escape.
+  inline<allowed> = inlineWithoutEscapable<allowed> | parsedBlockEscapable
 
   inlineWithoutEscapable<allowed>
     = boldItalic
@@ -217,7 +223,7 @@ spruce {
     | inlineDisplayMath
     | link
     | functionCall
-    | (~boldItalic ~bold ~italic ~code ~math ~inlineDisplayMath ~link ~functionCall allowed)+ --text
+    | (~boldItalic ~bold ~italic ~code ~math ~inlineDisplayMath ~link ~functionCall ~"[" ~"]" allowed)+ --text
  
 
   // The raw content of code blocks, display math, etc.
@@ -249,7 +255,7 @@ spruce {
 
   ${blockRules(maxHashes)}
 
-  parsedBlockEscapable = "]"
+  parsedBlockEscapable = "[" | "]"
   rawBlockEscapable = "}"
 }`;
 }

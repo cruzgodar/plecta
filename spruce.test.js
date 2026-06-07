@@ -340,6 +340,23 @@ test("misc: empty input -> empty output", async () =>
 	assert.equal(await compile("", "html"), "");
 });
 
+test("misc: literal brackets in prose survive the @text re-parse", async () =>
+{
+	// Text desugars to (@text[...]); literal [ ] must not be read as the arg's
+	// own delimiters (a leading [ would otherwise form a spurious [[ opener).
+	assert.equal(await compile("a [b] c", "html"), "<p>a [b] c</p>");
+	assert.equal(await compile("[b]", "html"), "<p>[b]</p>");
+	assert.equal(await compile("[]", "html"), "<p>[]</p>");
+	// Inside emphasis, and as a parsed-block argument re-matched as a document.
+	assert.equal(await compile("**a]b**", "html"), "<p><strong>a]b</strong></p>");
+	assert.equal(
+		await compile(lib + "(@id [[student[s'] learning]])", "html"),
+		NL + "<p>student[s'] learning</p>",
+	);
+	// A real link still wins over the bracket escape.
+	assert.equal(await compile("[t](u)", "html"), `<p><a href="u">t</a></p>`);
+});
+
 test("misc: single character", async () =>
 {
 	assert.equal(await compile("a", "html"), "<p>a</p>");
