@@ -229,9 +229,37 @@ test("call: wrapped", async () =>
 	assert.equal(await compile(lib + "(@id [hi])", "html"), NL + "hi");
 });
 
-test("call: raw passes content through verbatim", async () =>
+test("call: js block evaluates its body", async () =>
 {
-	assert.equal(await compile("@{stuff}", "html"), "stuff");
+	assert.equal(await compile("@{1 + 1}", "html"), "2");
+	assert.equal(await compile(`@{"st" + "uff"}`, "html"), "stuff");
+});
+
+test("call: js block can read declaration-block bindings", async () =>
+{
+	const def = `@@@html\nconst x = 21;\n@@@\n`;
+	assert.equal(await compile(def + "@{x * 2}", "html"), NL + "42");
+});
+
+test("call: js block as a function argument is evaluated, then stringified", async () =>
+{
+	// @up receives the *result* of evaluating the body, not its source text.
+	assert.equal(await compile(lib + `@up{"ab" + "c"}`, "html"), NL + "ABC");
+	assert.equal(await compile(lib + `@up{[1, 2, 3].join("-")}`, "html"), NL + "1-2-3");
+});
+
+test("call: js block result with commas/parens can't break an outer call", async () =>
+{
+	// The block's value lands in its own slot, so a produced ) or , never leaks
+	// into the enclosing argument list.
+	assert.equal(await compile(lib + `@join[@{"a,b"}][c]`, "html"), NL + "a,b,c");
+	assert.equal(await compile(lib + `@up{")"}`, "html"), NL + ")");
+});
+
+test("call: @ escapes and nested calls still work inside a js block", async () =>
+{
+	// @} escapes a brace so it doesn't close the block; @up[...] still runs.
+	assert.equal(await compile(lib + `@{ "{" + @up[hi] + "@}" }`, "html"), NL + "{HI}");
 });
 
 test("call: escaped @ becomes literal @", async () =>
@@ -279,9 +307,11 @@ test("call: function call inside a list item", async () =>
 	);
 });
 
-test("call: function call inside a raw block @{...}", async () =>
+test("call: function call inside a js block @{...}", async () =>
 {
-	assert.equal(await compile(lib + "@{ @up[hi] }", "html"), NL + " HI ");
+	// The body is JS, so the surrounding spaces are insignificant whitespace and
+	// @up[hi] resolves to its rendered value before the expression is evaluated.
+	assert.equal(await compile(lib + "@{ @up[hi] }", "html"), NL + "HI");
 });
 
 test("call: function returning undefined substitutes empty (Array.join skips it)", async () =>
@@ -299,12 +329,25 @@ test("call: template-hostile arg, $ triggers inline math", async () =>
 	assert.equal(await compile(lib + "@id[a$b$c]", "html"), NL + "a$b$c");
 });
 
-test("call: template-hostile arg, literal backtick in raw block (regression)", async () =>
+test("call: js block producing a backtick survives template-literal embedding", async () =>
 {
-	// Without escapeForTemplate turning ` into \`, the surrounding `…` wrapping
-	// in the generated template literal terminates early and the JS fails to
-	// parse, causing compile() to reject.
-	assert.equal(await compile(lib + "@id{`}", "html"), NL + "`");
+	// The block's value is interpolated into the argument's `…` template literal,
+	// so a produced backtick must not terminate that wrapper early.
+	assert.equal(await compile(lib + '@id{"`"}', "html"), NL + "`");
+});
+test("call: @[...] is replaced by its parsed content", async () =>
+{
+	// Like @{...} but parsed (not evaluated): the body is parsed as inline spruce
+	// markup, and the result is spliced in place of the @[ ] call.
+	assert.equal(await compile("@[**bold**]", "html"), "<strong>bold</strong>");
+	assert.equal(await compile(lib + "@[@up[hi] there]", "html"), NL + "HI there");
+});
+
+test("call: bare @[ with no closer still escapes a literal [", async () =>
+{
+	// The parsed branch needs a matching ], so a lone @[ falls through to the
+	// escape and yields a literal bracket.
+	assert.equal(await compile("@[", "html"), "[");
 });
 
 

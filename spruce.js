@@ -78,7 +78,7 @@ const POST_COMPILE_HOOKS = ["document"];
 // override out so the host can prefer it over the stdlib default.
 const HOOK_OVERRIDES_KEY = "__spruceHookOverrides";
 
-// The parsed/inline/raw block delimiters can be prefixed with any number of
+// The parsed/inline/js block delimiters can be prefixed with any number of
 // hashes (`#[[`, `##[[`, `###[[`, ...) to nest blocks past inner closers. Rather
 // than hardcode a fixed ceiling, we scan each input for the deepest hash run that
 // actually appears (see maxHashDepth) and generate exactly that many alternatives
@@ -87,19 +87,19 @@ function blockRules(maxHashes)
 {
 	const parsed = [];
 	const inline = [];
-	const raw = [];
+	const js = [];
 
 	for (let n = maxHashes; n >= 1; n--)
 	{
 		const h = "#".repeat(n);
 		parsed.push(`"${h}[[" (~"]]${h}" any)* "]]${h}"`);
 		inline.push(`"${h}[" inlineWithoutEscapable<~"]${h}" any>+ "]${h}"`);
-		raw.push(`"${h}{" (functionCall | (~"}${h}" any))+ "}${h}"`);
+		js.push(`"${h}{" (functionCall | (~"}${h}" any))+ "}${h}"`);
 	}
 
 	parsed.push(`"[[" (~"]]" any)* "]]"`);
 	inline.push(`"[" inlineWithoutEscapable<~"]" any>* "]"`);
-	raw.push(`"{" (functionCall | (~"}" any))* "}"`);
+	js.push(`"{" (functionCall | (~"}" any))* "}"`);
 
 	const join = alts => alts.join("\n\t| ");
 
@@ -109,8 +109,8 @@ function blockRules(maxHashes)
   parsedInlineBlock
 	= ${join(inline)}
 
-  rawBlock
-	= ${join(raw)}`;
+  jsBlock
+	= ${join(js)}`;
 }
 
 function buildGrammarSource(maxHashes)
@@ -121,7 +121,7 @@ spruce {
 
   // Raw-mode start rule (see compile's raw flag): the whole document is raw,
   // so only declaration blocks and function calls are interpreted and every other
-  // character is literal, exactly as inside a @{} raw block. declarationBlock is
+  // character is literal markup-free text. declarationBlock is
   // tried first (its @@@ opener would otherwise be eaten as an escaped @), then
   // functionCall, so @-calls win over the catch-all any.
   rawDocument = (declarationBlock | functionCall | any)*
@@ -248,22 +248,36 @@ spruce {
   functionCall
     = "(" spaceOrTab* "@" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
     | "@" spaceOrTab* jsIdentifier spaceOrTabPaddedBlock*                  --bare
+    | "@" spaceOrTab* jsBlock                                              --js
     | "@" spaceOrTab* rawBlock                                             --raw
+    | "@" spaceOrTab* parsedInlineBlock                                    --parsed
     | "@" (~space any)                                                     --escaped
     | "@" space                                                            --invalid
-    
+
   jsIdentifier = jsIdentifierStart jsIdentifierPart*
   jsIdentifierStart = letter | "_" | "$"
   jsIdentifierPart = jsIdentifierStart | digit
-  
-  spacePaddedBlock = space* parsedOrRawBlock
-  spaceOrTabPaddedBlock = spaceOrTab* parsedOrRawBlock
-  parsedOrRawBlock = parsedBlock | parsedInlineBlock | rawBlock
+
+  spacePaddedBlock = space* callArgument
+  spaceOrTabPaddedBlock = spaceOrTab* callArgument
+
+  // jsBlock comes before rawBlock so a user's { } argument always parses as a JS
+  // block; rawBlock uses the « » delimiters, which only ever appear in desugarer
+  // output (it ferries the literal bodies of code/math/link into their stdlib
+  // calls), so it never competes with anything a user actually types.
+  callArgument = parsedBlock | parsedInlineBlock | jsBlock | rawBlock
 
   ${blockRules(maxHashes)}
 
+  // Raw literal block. Internal: emitted only by the desugarer — to pass code,
+  // math, and link bodies through verbatim (with nested @-calls still honored),
+  // and, as @«[», to re-encode the literal [ ] characters that text runs escape
+  // (now that @[ ] is the parsed-call syntax). Its body can't contain a literal
+  // closer; raw<> escapes » to @» on the way in.
+  rawBlock = "«" (functionCall | (~"»" any))* "»"
+
   parsedBlockEscapable = "[" | "]"
-  rawBlockEscapable = "}"
+  rawBlockEscapable = "»"
 }`;
 }
 
@@ -356,6 +370,7 @@ function attachSemantics(sem)
 {
 	sem.addOperation("desugar", desugarOperation);
 	sem.addOperation("getCode", getCodeOperation);
+	sem.addOperation("getJsCode", getJsCodeOperation);
 	sem.addOperation("insertCodeOutput(__spruceOutput)", insertCodeOutputOperation);
 	return sem;
 }
@@ -370,13 +385,13 @@ const desugarOperation = {
 	codeBlock(_1, _2, _3, language, _4, _5, body, _6, _7, _8, _9)
 	{
 		captureFunctionCall(this);
-		return `(@codeBlock{${body.desugar()}}{${language.desugar()}})`;
+		return `(@codeBlock«${body.desugar()}»«${language.desugar()}»)`;
 	},
 
 	displayMath(_1, _2, _3, _4, body, _5, _6, _7, _8)
 	{
 		captureFunctionCall(this);
-		return `(@displayMath{${body.desugar()}})`;
+		return `(@displayMath«${body.desugar()}»)`;
 	},
 
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
@@ -440,25 +455,25 @@ const desugarOperation = {
 	link(_1, displayText, _2, _3, url, _4)
 	{
 		captureFunctionCall(this);
-		return `(@link[${displayText.desugar()}]{${url.desugar()}})`;
+		return `(@link[${displayText.desugar()}]«${url.desugar()}»)`;
 	},
 
 	code(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `(@code{${body.desugar()}})`;
+		return `(@code«${body.desugar()}»)`;
 	},
 
 	math(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `(@math{${body.desugar()}})`;
+		return `(@math«${body.desugar()}»)`;
 	},
 
 	inlineDisplayMath(_1, body, _2)
 	{
 		captureFunctionCall(this);
-		return `(@inlineDisplayMath{${body.desugar()}})`;
+		return `(@inlineDisplayMath«${body.desugar()}»)`;
 	},
 
 	inlineWithoutEscapable_text(body)
@@ -485,9 +500,22 @@ const desugarOperation = {
 		return `@${name.desugar()}${spaceOrTabPaddedBlocks.desugar()}`;
 	},
 
+	functionCall_js(_1, _2, block)
+	{
+		return `@${block.desugar()}`;
+	},
+
 	functionCall_raw(_1, _2, block)
 	{
 		return `@${block.desugar()}`;
+	},
+
+	functionCall_parsed(_1, _2, block)
+	{
+		// @[...] is replaced by its parsed content: desugar the inline body and
+		// splice it directly into the surrounding context, dropping the [ ]
+		// delimiters. block is a parsedInlineBlock whose middle child is the body.
+		return block.child(1).desugar();
 	},
 
 	functionCall_escaped(_1, character)
@@ -506,7 +534,7 @@ const desugarOperation = {
 			const after = line.slice(startCol + 2);
 			return `${before}${RED_BOLD}${offending}${RESET}${after}`;
 		});
-		throw new Error(`Expected an identifier, parentheses, or raw block following @.`);
+		throw new Error(`Expected an identifier, parentheses, or a { } / [ ] block following @.`);
 	},
 
 	jsIdentifier(_1, _2)
@@ -549,16 +577,25 @@ const desugarOperation = {
 		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
 	},
 
-	rawBlock(start, body, end)
+	jsBlock(start, body, end)
 	{
+		// Capture a location for the block itself (consumed by getCode's
+		// registerJsBlock) so a runtime error in the evaluated body can be mapped
+		// back to source. Must come before the body so the capture order matches
+		// getCode's consume order (block first, then its nested calls).
+		captureFunctionCall(this);
 		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
 	},
 
-	
+
 
 	parsedBlockEscapable(character)
 	{
-		return `@${character.desugar()}`;
+		// A literal [ or ] in a text run would otherwise collide with the [ ]
+		// argument delimiters of the surrounding @text[…] call (or be read as the
+		// @[…] parsed-call syntax). Re-encode it through an internal raw inline
+		// call, @«[», which the re-parse renders back to the bare character.
+		return `@«${character.desugar()}»`;
 	},
 
 	rawBlockEscapable(character)
@@ -624,6 +661,57 @@ function escapeForTemplate(s)
 		.replace(/\$\{/g, "\\${");
 }
 
+// Emit the `storage[id] = name(args)` line for a function call and return the
+// bare `storage[id]` reference. Shared by getCode (which wraps the reference in
+// `${ }` for embedding in an argument's template literal) and getJsCode (which
+// uses the bare reference directly, since a jsBlock body is plain JS source).
+function registerCall(node, name, blocks)
+{
+	const startIdx = node.source.startIdx + getCodeOffset;
+	const id = JSON.stringify(startIdx);
+
+	locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
+
+	const functionArguments = blocks.children
+		.map(block => "`" + block.getCode() + "`")
+		.join(",");
+
+	const nameCode = name.getCode();
+
+	// With args, do a plain call so a non-function (i.e. a constant) lets
+	// JS throw a TypeError that logSourceError can render. Without args,
+	// keep the typeof guard so a bare `@x` resolves to the constant value.
+	const rhs = blocks.children.length > 0
+		? `${nameCode}(${functionArguments})`
+		: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
+
+	codeToExecute += `${storageName}[${id}] = ${rhs};\n`;
+
+	return `${storageName}[${id}]`;
+}
+
+// Emit the `storage[id] = (jsBody)` line for a jsBlock and return the bare
+// `storage[id]` reference. The body is JS source: literal text passes through
+// verbatim and nested @-calls become bare references to their own slots (see
+// getJsCode). The result lands in its own slot, so commas or closing parens it
+// produces can't break the argument list of an enclosing function call.
+function registerJsBlock(node, body)
+{
+	const startIdx = node.source.startIdx + getCodeOffset;
+	const id = JSON.stringify(startIdx);
+
+	locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
+
+	const jsCode = body.getJsCode();
+	// An empty block evaluates to "" rather than (undefined), which would stringify
+	// to the literal text "undefined" when interpolated into an argument.
+	const expr = jsCode.trim().length ? jsCode : `""`;
+
+	codeToExecute += `${storageName}[${id}] = (${expr});\n`;
+
+	return `${storageName}[${id}]`;
+}
+
 const getCodeOperation = {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
@@ -651,49 +739,17 @@ const getCodeOperation = {
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
 	{
-		const startIdx = this.source.startIdx + getCodeOffset;
-		const id = JSON.stringify(startIdx);
-
-		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
-
-		const functionArguments = spacePaddedBlocks.children
-			.map(block => "`" + block.getCode() + "`")
-			.join(",");
-
-		const nameCode = name.getCode();
-
-		// With args, do a plain call so a non-function (i.e. a constant) lets
-		// JS throw a TypeError that logSourceError can render. Without args,
-		// keep the typeof guard so a bare `@x` resolves to the constant value.
-		const rhs = spacePaddedBlocks.children.length > 0
-			? `${nameCode}(${functionArguments})`
-			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
-
-		codeToExecute += `${storageName}[${id}] = ${rhs};\n`;
-
-		return "${" + storageName + "[" + id + "]}";
+		return "${" + registerCall(this, name, spacePaddedBlocks) + "}";
 	},
 
 	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
 	{
-		const startIdx = this.source.startIdx + getCodeOffset;
-		const id = JSON.stringify(startIdx);
+		return "${" + registerCall(this, name, spaceOrTabPaddedBlocks) + "}";
+	},
 
-		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
-
-		const functionArguments = spaceOrTabPaddedBlocks.children
-			.map(block => "`" + block.getCode() + "`")
-			.join(",");
-
-		const nameCode = name.getCode();
-
-		const rhs = spaceOrTabPaddedBlocks.children.length > 0
-			? `${nameCode}(${functionArguments})`
-			: `typeof ${nameCode} === "function" ? ${nameCode}() : ${nameCode}`;
-
-		codeToExecute += `${storageName}[${id}] = ${rhs};\n`;
-
-		return "${" + storageName + "[" + id + "]}";
+	functionCall_js(_1, _2, block)
+	{
+		return block.getCode();
 	},
 
 	functionCall_raw(_1, _2, block)
@@ -742,8 +798,16 @@ const getCodeOperation = {
 		return body.getCode();
 	},
 
-	rawBlock(_1, body, _2)
+	jsBlock(_start, body, _end)
 	{
+		return "${" + registerJsBlock(this, body) + "}";
+	},
+
+	rawBlock(_open, body, _close)
+	{
+		// Internal raw literal block (« »): pass the body through verbatim, exactly
+		// as the old { } blocks did — text is template-escaped and nested @-calls
+		// interpolate as ${storage[id]}. Drop the « » delimiters.
 		return body.getCode();
 	},
 
@@ -762,6 +826,57 @@ const getCodeOperation = {
 	_iter(...children)
 	{
 		return children.map(c => c.getCode()).join("");
+	},
+};
+
+// Render a jsBlock body to JS source. Unlike getCode (which builds a template
+// literal for a function argument), this produces raw JS: literal text passes
+// through verbatim and nested @-calls resolve to bare `storage[id]` references.
+// Each nested call still registers its own `storage[id] = ...` line, exactly as
+// in getCode — only the returned reference differs (bare here, `${ }`-wrapped
+// there). A call's own arguments are still rendered via getCode, since those
+// remain template literals regardless of the enclosing jsBlock.
+const getJsCodeOperation = {
+	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
+	{
+		return registerCall(this, name, spacePaddedBlocks);
+	},
+
+	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
+	{
+		return registerCall(this, name, spaceOrTabPaddedBlocks);
+	},
+
+	functionCall_js(_1, _2, block)
+	{
+		return block.getJsCode();
+	},
+
+	functionCall_escaped(_1, character)
+	{
+		// @} (and friends) let a literal brace sit inside the block without closing
+		// it; emit the bare escaped character into the JS source.
+		return character.sourceString;
+	},
+
+	jsBlock(_start, body, _end)
+	{
+		return registerJsBlock(this, body);
+	},
+
+	_terminal()
+	{
+		return this.sourceString;
+	},
+
+	_nonterminal(...children)
+	{
+		return children.map(c => c.getJsCode()).join("");
+	},
+
+	_iter(...children)
+	{
+		return children.map(c => c.getJsCode()).join("");
 	},
 };
 
@@ -785,6 +900,11 @@ const insertCodeOutputOperation = {
 		return this.args.__spruceOutput[id];
 	},
 
+	functionCall_js(_1, _2, block)
+	{
+		return block.insertCodeOutput(this.args.__spruceOutput);
+	},
+
 	functionCall_raw(_1, _2, block)
 	{
 		return block.insertCodeOutput(this.args.__spruceOutput);
@@ -799,8 +919,19 @@ const insertCodeOutputOperation = {
 		return character.sourceString;
 	},
 
-	rawBlock(_1, body, _2)
+	jsBlock(_start, _body, _end)
 	{
+		// The block's evaluated value was stored under its own startIdx by
+		// registerJsBlock; substitute it directly (don't recurse into the body,
+		// which is JS source, not output).
+		const id = JSON.stringify(this.source.startIdx);
+		return this.args.__spruceOutput[id];
+	},
+
+	rawBlock(_open, body, _close)
+	{
+		// Internal raw literal block: recurse into the body (substituting nested
+		// @-calls), dropping the « » delimiters.
 		return body.insertCodeOutput(this.args.__spruceOutput);
 	},
 
@@ -933,6 +1064,22 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 		return true;
 	}
 
+	// jsBlock evaluation lines read `<storageName>[N] = (...);` — an opening paren
+	// right after `=`, which the call regex above (expecting an identifier) skips.
+	// Map them to the block's captured source line.
+	const jsBlockMatch = bodyLine.match(new RegExp(`${storageName}\\[(\\d+)\\]\\s*=\\s*\\(`));
+
+	if (jsBlockMatch)
+	{
+		const location = functionCallLocations[jsBlockMatch[1]];
+
+		if (location)
+		{
+			renderContext(source, location.lineNum, lineContent => `${RED_BOLD}${lineContent}${RESET}`);
+			return true;
+		}
+	}
+
 	for (const range of declarationBlockRanges)
 	{
 		if (errorLineInBody >= range.generatedStart && errorLineInBody <= range.generatedEnd)
@@ -1063,8 +1210,8 @@ async function _compileImpl(input, outputFormat, filePath, root, raw)
 		// grammar parses both the original input and the desugared output.
 		useGrammar(maxHashDepth(input));
 
-		// In raw mode the whole document is treated as raw content (as if wrapped in
-		// @{}): only @-calls are interpreted, everything else is literal. Both the
+		// In raw mode the whole document is treated as raw content: only @-calls are
+		// interpreted, everything else is literal markup-free text. Both the
 		// initial match and the post-desugar re-match use the rawDocument start rule
 		// so the desugared output is re-parsed under the same raw semantics.
 		const startRule = raw ? "rawDocument" : "document";
