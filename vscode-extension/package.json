@@ -50,10 +50,7 @@
       { "id": "languageTag", "description": "Language identifier after a ``` fence" },
       { "id": "bracket1", "description": "Bracket pair color 1 (sequential)" },
       { "id": "bracket2", "description": "Bracket pair color 2 (sequential)" },
-      { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" },
-      { "id": "keyword", "description": "JavaScript keyword inside a @{ } block" },
-      { "id": "number", "description": "JavaScript number inside a @{ } block" },
-      { "id": "comment", "description": "JavaScript comment inside a @{ } block" }
+      { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" }
     ],
     "semanticTokenModifiers": [
       { "id": "bold", "description": "Bold emphasis, composes with any token type" },
@@ -70,11 +67,7 @@
           "list": ["markup.heading"],
           "spruceFunction": ["keyword"],
           "escape": ["constant.character.escape"],
-          "languageTag": ["entity.name.type"],
-          "keyword": ["keyword.control"],
-          "number": ["constant.numeric"],
-          "comment": ["comment"],
-          "operator": ["keyword.operator"]
+          "languageTag": ["entity.name.type"]
         }
       }
     ],

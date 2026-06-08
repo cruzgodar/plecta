@@ -161,10 +161,10 @@ test("invalid @ (followed by a non-identifier) is colored invalid", () => {
 	assert.equal(src[inv.start], "@");
 });
 
-test("invalid @ inside a js block is also colored invalid", () => {
+test("invalid @ inside a raw block is also colored invalid", () => {
 	const src = "@{ @ ) }";
 	const inv = collectTokens(src).find(t => t.type === "invalid");
-	assert.ok(inv, "invalid @ surfaces inside js blocks too");
+	assert.ok(inv, "invalid @ surfaces in raw contexts too");
 });
 
 test("function call inside an HTML tag is highlighted as a function", () => {
@@ -175,44 +175,21 @@ test("function call inside an HTML tag is highlighted as a function", () => {
 	assert.ok(collectTokens(src).find(t => t.type === "string"));
 });
 
-test("js block body is highlighted as JS, with function-call gaps preserved", () => {
-	// @outer{ "s" + @inner[x] } — the body is JS, so the string literal gets a
-	// string token and the nested @inner call keeps its function coloring.
-	const src = `@outer{ "s" + @inner[x] }`;
-	const tokens = collectTokens(src);
+test("raw block content is string, with function-call gaps preserved", () => {
+	// @outer{ raw stuff @inner[x] more } — outer is functionCall_raw.
+	const tokens = collectTokens("@outer{ raw @inner[x] more }");
 	const strings = tokens.filter(t => t.type === "string");
-	const ops = tokens.filter(t => t.type === "operator");
 	const fns = tokens.filter(t => t.type === "spruceFunction");
-	// The JS string literal "s" is colored as a string.
-	const strStart = src.indexOf('"');
-	assert.ok(strings.find(t => t.start === strStart), "JS string literal is a string token");
-	// The + operator is colored.
-	assert.ok(ops.find(t => src.slice(t.start, t.end) === "+"), "JS operator is colored");
-	// The nested @inner call still emits function tokens.
-	assert.ok(fns.find(t => src.slice(t.start, t.end) === "inner"), "nested function name preserved");
-	// No JS token should overlap a function token.
-	for (const s of [...strings, ...ops]) {
+	assert.ok(strings.length >= 1, "expected at least one string token in raw block");
+	// The inner @ and identifier should still emit function tokens.
+	assert.ok(fns.find(t => t.start > 6 && t.end <= 20), "expected inner function tokens preserved");
+	// No string token should overlap a function token.
+	for (const s of strings) {
 		for (const f of fns) {
 			const overlap = s.start < f.end && f.start < s.end;
-			assert.ok(!overlap, `JS token ${JSON.stringify(s)} overlaps function ${JSON.stringify(f)}`);
+			assert.ok(!overlap, `string ${JSON.stringify(s)} overlaps function ${JSON.stringify(f)}`);
 		}
 	}
-});
-
-test("js block keywords and numbers are highlighted", () => {
-	const src = "@{ return 42 }";
-	const tokens = collectTokens(src);
-	assert.ok(tokens.find(t => t.type === "keyword" && src.slice(t.start, t.end) === "return"));
-	assert.ok(tokens.find(t => t.type === "number" && src.slice(t.start, t.end) === "42"));
-});
-
-test("@[ ] parsed call highlights its content as markup", () => {
-	// @[**b**] — the @ is a function marker and the inner **b** is bold.
-	const src = "@[**b**]";
-	const tokens = collectTokens(src);
-	assert.ok(tokens.find(t => t.type === "spruceFunction" && t.start === 0 && t.end === 1), "@ marker");
-	// The bold modifier bit is set on the inner content.
-	assert.ok(tokens.find(t => (t.modifiers & 1) !== 0), "inner content carries the bold modifier");
 });
 
 test("function call inside a code block is highlighted as a function", () => {

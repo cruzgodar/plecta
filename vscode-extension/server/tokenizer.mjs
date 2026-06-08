@@ -24,10 +24,6 @@ export const TOKEN_TYPES = [
 	"bracket1",
 	"bracket2",
 	"bracket3",
-	// JS tokens emitted inside @{ } / @foo{ } blocks (see lexJs).
-	"keyword",
-	"number",
-	"comment",
 ];
 
 // Bold/italic are token *modifiers*, not types: they compose with whatever type
@@ -103,87 +99,6 @@ function emitRawBody(t, bodyNode, start, end, fillType) {
 		}
 		if (cursor < end) emit(t, cursor, end, fillType);
 	}
-	for (const tok of inner) t.push(tok);
-}
-
-// JS blocks (@{ … } and @foo{ … }) are evaluated as JavaScript by the compiler,
-// so their bodies are highlighted as JS. We don't have a full JS grammar here, so
-// lexJs is a lightweight scanner that surfaces the high-signal token classes —
-// keywords, numbers, strings/templates, comments, and operators. Identifiers,
-// whitespace, and punctuation are left at the default color.
-const JS_KEYWORDS = new Set([
-	"await", "break", "case", "catch", "class", "const", "continue", "debugger",
-	"default", "delete", "do", "else", "export", "extends", "false", "finally",
-	"for", "function", "if", "import", "in", "instanceof", "let", "new", "null",
-	"of", "return", "super", "switch", "this", "throw", "true", "try", "typeof",
-	"var", "void", "while", "with", "yield", "async", "static", "get", "set",
-	"undefined",
-]);
-
-function lexJs(t, text, start, end) {
-	const isIdStart = (c) => /[A-Za-z_$]/.test(c);
-	const isId = (c) => /[A-Za-z0-9_$]/.test(c);
-	const isDigit = (c) => c >= "0" && c <= "9";
-	let i = start;
-	while (i < end) {
-		const c = text[i];
-		if (c === " " || c === "\t" || c === "\n" || c === "\r") { i++; continue; }
-		// Line comment.
-		if (c === "/" && text[i + 1] === "/") {
-			let j = i + 2;
-			while (j < end && text[j] !== "\n" && text[j] !== "\r") j++;
-			emit(t, i, j, "comment"); i = j; continue;
-		}
-		// Block comment.
-		if (c === "/" && text[i + 1] === "*") {
-			let j = i + 2;
-			while (j < end && !(text[j] === "*" && text[j + 1] === "/")) j++;
-			j = Math.min(end, j + 2);
-			emit(t, i, j, "comment"); i = j; continue;
-		}
-		// String or template literal (no embedded-expression handling — the whole
-		// literal reads as a string, which is fine for highlighting).
-		if (c === '"' || c === "'" || c === "`") {
-			let j = i + 1;
-			while (j < end && text[j] !== c) { if (text[j] === "\\") j++; j++; }
-			j = Math.min(end, j + 1);
-			emit(t, i, j, "string"); i = j; continue;
-		}
-		// Number.
-		if (isDigit(c) || (c === "." && isDigit(text[i + 1]))) {
-			let j = i + 1;
-			while (j < end && /[0-9a-fA-FxXoObBeEn._]/.test(text[j])) j++;
-			emit(t, i, j, "number"); i = j; continue;
-		}
-		// Identifier or keyword.
-		if (isIdStart(c)) {
-			let j = i + 1;
-			while (j < end && isId(text[j])) j++;
-			if (JS_KEYWORDS.has(text.slice(i, j))) emit(t, i, j, "keyword");
-			i = j; continue;
-		}
-		// Operator (punctuation like ()[]{},;. is left at the default color).
-		if ("+-*/%=<>!&|^~?".includes(c)) {
-			emit(t, i, i + 1, "operator"); i++; continue;
-		}
-		i++;
-	}
-}
-
-// Like emitRawBody, but fills the gaps between nested @-call tokens with JS
-// tokens instead of a single flat raw color. Nested @-calls still emit their own
-// (function-colored) tokens first, so they stand out against the JS body.
-function emitJsBody(t, bodyNode, start, end) {
-	const inner = [];
-	bodyNode.collect(inner);
-	inner.sort((a, b) => a.start - b.start);
-	const text = bodyNode.source.sourceString;
-	let cursor = start;
-	for (const tok of inner) {
-		if (tok.start > cursor) lexJs(t, text, cursor, tok.start);
-		if (tok.end > cursor) cursor = tok.end;
-	}
-	if (cursor < end) lexJs(t, text, cursor, end);
 	for (const tok of inner) t.push(tok);
 }
 
@@ -315,17 +230,6 @@ const handlers = {
 	functionCall_bare(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 	},
-	// @{ … } js call and @[ … ] parsed call: paint the leading @ like a function
-	// marker, then recurse so the block child (jsBlock / parsedInlineBlock) colors
-	// its own body and delimiters.
-	functionCall_js(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
-	},
-	functionCall_parsed(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
-	},
-	// @« … » internal raw call (only ever appears in desugarer output, never in a
-	// user's source, but handle it so the @ is colored if one is hand-written).
 	functionCall_raw(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 	},
@@ -339,8 +243,8 @@ const handlers = {
 
 	// A bare @ that isn't a valid call (e.g. "@" followed by a space): the
 	// compiler rejects it, so flag the whole sequence as invalid. Matched inside
-	// js blocks and raw environments too (functionCall is part of those grammars),
-	// so it surfaces in every context.
+	// raw blocks too (functionCall is part of the raw grammar), so it surfaces in
+	// both parsed and raw contexts.
 	functionCall_invalid(node, t) {
 		emit(t, node.source.startIdx, node.source.endIdx, "invalid");
 		return true;
@@ -383,13 +287,14 @@ const handlers = {
 		return true;
 	},
 
-	// JS blocks: the body is evaluated as JavaScript, so it's highlighted as JS
-	// (see emitJsBody), EXCEPT for nested @-calls, which keep their own function
-	// coloring. The `{` / `}` (and any hashes) delimiters take bracket colors.
-	jsBlock(node, t) {
+	// Raw blocks: the content is a string, EXCEPT for nested function calls,
+	// which keep their own coloring. We let children emit their tokens first
+	// (so nested @funcs render as functions), then fill the gaps with `string`.
+	// The `{` / `}` (and any hashes) delimiters take sequential bracket colors.
+	rawBlock(node, t) {
 		emitBracketed(node, t, () => {
 			const body = node.children[1];
-			emitJsBody(t, body, body.source.startIdx, body.source.endIdx);
+			emitRawBody(t, body, body.source.startIdx, body.source.endIdx, "string");
 		});
 		return true;
 	},
