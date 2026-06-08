@@ -192,38 +192,61 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
-test("json block content gets JSON highlighting, with function-call gaps preserved", () => {
-	// @f({"k": @g[x]}) — the (...) is a JSON-block argument, highlighted as JSON.
-	const src = `@f({"k": @g[x]})`;
-	const tokens = collectTokens(src);
-	const fns = tokens.filter(t => t.type === "spruceFunction");
-	// "k" is followed by `:`, so it's a property key, not a plain string value.
-	const key = tokens.find(t => t.type === "property" && src.slice(t.start, t.end) === '"k"');
-	assert.ok(key, "expected the JSON key to be a property token");
-	// The nested @g call keeps its own function coloring.
-	assert.ok(fns.find(t => src.slice(t.start, t.end) === "g"), "expected nested function token preserved");
-	// No JSON token should overlap a function token.
-	const jsonToks = tokens.filter(t => ["property", "string", "number", "boolean"].includes(t.type));
-	for (const s of jsonToks) {
-		for (const f of fns) {
-			const overlap = s.start < f.end && f.start < s.end;
-			assert.ok(!overlap, `json token ${JSON.stringify(s)} overlaps function ${JSON.stringify(f)}`);
-		}
-	}
-});
-
-test("json block highlights string values, numbers, and true/false/null", () => {
-	const src = `@f({"name": "spruce", "count": 42, "ok": true, "x": null})`;
+test("json block highlights keys, string values, numbers, and true/false/null", () => {
+	const src = `@show({"name": "spruce", "count": 42, "ok": true, "x": null})`;
 	const tokens = collectTokens(src);
 	const typeOf = text => {
 		const idx = src.indexOf(text);
 		return tokens.find(t => t.start === idx && t.end === idx + text.length)?.type;
 	};
 	assert.equal(typeOf('"name"'), "property", "key is a property");
-	assert.equal(typeOf('"spruce"'), "string", "string value is a string");
+	assert.equal(typeOf('"spruce"'), "jsonString", "string value is a jsonString");
 	assert.equal(typeOf("42"), "number", "number value is a number");
 	assert.equal(typeOf("true"), "boolean", "true is a boolean");
 	assert.equal(typeOf("null"), "boolean", "null is a boolean");
+	// Braces and brackets take bracket-pair colors.
+	const brace = src.indexOf("{");
+	assert.ok(
+		tokens.find(t => t.start === brace && t.type.startsWith("bracket")),
+		"the opening brace is a bracket token",
+	);
+});
+
+test("json block: nested @-call keeps its function coloring without breaking the scan", () => {
+	// @g[x] sits where a value goes; the surrounding "k" key and braces are still
+	// tokenized, and the @g call keeps its own coloring with no overlap.
+	const src = `@f({"k": @g[x]})`;
+	const tokens = collectTokens(src);
+	const key = tokens.find(t => t.type === "property" && src.slice(t.start, t.end) === '"k"');
+	assert.ok(key, "the JSON key is a property token");
+	const fns = tokens.filter(t => t.type === "spruceFunction");
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "g"), "nested function token preserved");
+	const jsonToks = tokens.filter(t => ["property", "jsonString", "number", "boolean"].includes(t.type));
+	for (const s of jsonToks) {
+		for (const fn of fns) {
+			assert.ok(!(s.start < fn.end && fn.start < s.end), "no JSON token overlaps a function token");
+		}
+	}
+});
+
+test("json block: @-call inside a string value does not derail the scan", () => {
+	// @who sits inside the string value; the value should still read as one string
+	// (split only by the opaque @-call span), and the trailing brace stays a bracket.
+	const src = `@show({"who": "@who"})`;
+	const tokens = collectTokens(src);
+	assert.ok(
+		tokens.find(t => t.type === "property" && src.slice(t.start, t.end) === '"who"'),
+		"the key is still a property",
+	);
+	assert.ok(
+		tokens.find(t => t.type === "spruceFunction" && src.slice(t.start, t.end) === "who"),
+		"the nested @who keeps function coloring",
+	);
+	const closeBrace = src.lastIndexOf("}");
+	assert.ok(
+		tokens.find(t => t.start === closeBrace && t.type.startsWith("bracket")),
+		"the closing brace is a bracket token (scan recovered after the string)",
+	);
 });
 
 test("html in a parsed block still highlights when the closing ]] is indented", () => {

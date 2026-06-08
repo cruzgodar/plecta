@@ -25,6 +25,7 @@ export const TOKEN_TYPES = [
 	"bracket2",
 	"bracket3",
 	"property",
+	"jsonString",
 	"number",
 	"boolean",
 ];
@@ -105,62 +106,111 @@ function emitRawBody(t, bodyNode, start, end, fillType) {
 	for (const tok of inner) t.push(tok);
 }
 
-// JSON blocks color their content with JSON syntax highlighting (string values,
-// property keys, numbers, and the true/false/null keywords) rather than as one
-// flat raw color, EXCEPT for nested @function calls — the compiler still
-// interprets those, so they keep their function coloring like in any other raw
-// environment. We let the body's nested @funcs emit first (same as emitRawBody),
-// then lex the JSON text in the gaps between them.
-function emitJsonBody(t, bodyNode, start, end) {
+// Emits JSON syntax-highlighting tokens for a json-block body, matching the
+// editor's default JSON colors as closely as we can: property keys, string
+// values, numbers, and true/false/null each get their own scope (mapped to the
+// standard JSON TextMate scopes in package.json), and braces/brackets take the
+// sequential bracket-pair colors, continuing one level deeper than the block's
+// own parens (`baseColor`). Nested @function calls — which the compiler still
+// interprets — keep their function coloring: we collect their tokens first and
+// treat each as an opaque span the JSON scan skips over, so e.g. an @-call inside
+// a string value doesn't derail the scan.
+function emitJsonBody(t, bodyNode, start, end, baseColor) {
 	const text = bodyNode.source.sourceString;
-	const inner = [];
-	bodyNode.collect(inner);
-	inner.sort((a, b) => a.start - b.start);
-	let cursor = start;
-	for (const tok of inner) {
-		if (tok.start > cursor) lexJson(t, text, cursor, tok.start);
-		if (tok.end > cursor) cursor = tok.end;
-	}
-	if (cursor < end) lexJson(t, text, cursor, end);
-	for (const tok of inner) t.push(tok);
+	const calls = [];
+	bodyNode.collect(calls);
+	calls.sort((a, b) => a.start - b.start);
+	scanJson(t, text, start, end, calls, baseColor);
+	for (const tok of calls) t.push(tok);
 }
 
-// Minimal JSON lexer over text[a, b). Emits tokens for string literals (a key if
-// the next non-whitespace character is `:`, otherwise a value), numbers, and the
-// true/false/null literals. Structural punctuation ({}[]:,) is left uncolored so
-// it falls back to the default editor color. Tolerant of malformed input (it just
-// advances) since the body is highlighted live while being typed.
-function lexJson(t, text, a, b) {
-	let i = a;
-	while (i < b) {
+// The nested @-call span covering offset `i`, if any (so the JSON scan can skip
+// over it). Spans are small and few per block, so a linear probe is fine.
+function callAt(calls, i) {
+	for (const c of calls) if (c.start <= i && i < c.end) return c;
+	return null;
+}
+
+function scanJson(t, text, start, end, calls, baseColor) {
+	let i = start;
+	let depth = 0;
+	while (i < end) {
+		const span = callAt(calls, i);
+		if (span) { i = span.end; continue; }
 		const c = text[i];
-		if (c === '"') {
-			let j = i + 1;
-			while (j < b) {
-				if (text[j] === "\\") { j += 2; continue; }
-				if (text[j] === '"') { j++; break; }
-				j++;
-			}
-			const end = Math.min(j, b);
-			let k = end;
-			while (k < b && /\s/.test(text[k])) k++;
-			emit(t, i, end, text[k] === ":" ? "property" : "string");
-			i = j;
+		if (c === "{" || c === "[") {
+			emit(t, i, i + 1, bracketType(baseColor + depth));
+			depth++;
+			i++;
+		} else if (c === "}" || c === "]") {
+			if (depth > 0) depth--;
+			emit(t, i, i + 1, bracketType(baseColor + depth));
+			i++;
+		} else if (c === '"') {
+			const strEnd = scanJsonString(text, i, end, calls);
+			// A string is a property key iff the next significant char is a colon.
+			const isKey = nextSignificant(text, strEnd, end, calls) === ":";
+			emit(t, i, Math.min(strEnd, end), isKey ? "property" : "jsonString");
+			i = strEnd;
 		} else if (c === "-" || (c >= "0" && c <= "9")) {
-			let j = i + 1;
-			while (j < b && /[0-9.eE+\-]/.test(text[j])) j++;
-			emit(t, i, j, "number");
-			i = j;
+			const numEnd = scanJsonNumber(text, i, end);
+			emit(t, i, numEnd, "number");
+			i = numEnd;
 		} else if (c >= "a" && c <= "z") {
 			let j = i + 1;
-			while (j < b && text[j] >= "a" && text[j] <= "z") j++;
+			while (j < end && text[j] >= "a" && text[j] <= "z") j++;
 			const word = text.slice(i, j);
 			if (word === "true" || word === "false" || word === "null") emit(t, i, j, "boolean");
 			i = j;
 		} else {
+			// Whitespace, ':' and ',' (default-colored), or stray characters.
 			i++;
 		}
 	}
+}
+
+// Scans a JSON string starting at the opening quote `i`; returns the offset just
+// past the closing quote (or `end` if unterminated). Skips backslash escapes and
+// any nested @-call span (an @-call may sit inside the string literal).
+function scanJsonString(text, i, end, calls) {
+	let j = i + 1;
+	while (j < end) {
+		const span = callAt(calls, j);
+		if (span) { j = span.end; continue; }
+		const ch = text[j];
+		if (ch === "\\") { j += 2; continue; }
+		if (ch === '"') return j + 1;
+		j++;
+	}
+	return end;
+}
+
+// The next non-whitespace character at or after `from`, skipping @-call spans, or
+// null at end. Used to tell a `"key":` from a bare string value.
+function nextSignificant(text, from, end, calls) {
+	let j = from;
+	while (j < end) {
+		const span = callAt(calls, j);
+		if (span) { j = span.end; continue; }
+		const ch = text[j];
+		if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") { j++; continue; }
+		return ch;
+	}
+	return null;
+}
+
+// Scans a JSON number (optional sign, integer, fraction, exponent) from `i`.
+function scanJsonNumber(text, i, end) {
+	let j = i;
+	if (text[j] === "-") j++;
+	while (j < end && text[j] >= "0" && text[j] <= "9") j++;
+	if (text[j] === ".") { j++; while (j < end && text[j] >= "0" && text[j] <= "9") j++; }
+	if (text[j] === "e" || text[j] === "E") {
+		j++;
+		if (text[j] === "+" || text[j] === "-") j++;
+		while (j < end && text[j] >= "0" && text[j] <= "9") j++;
+	}
+	return j;
 }
 
 // Rule handlers. Returning true means "fully handled, don't recurse into children";
@@ -361,13 +411,13 @@ const handlers = {
 	},
 
 	// JSON blocks (`( ... )`, optionally hash-prefixed) are raw JSON text fed to
-	// JSON.parse, with nested @-calls keeping their own coloring. The body gets
-	// JSON syntax highlighting (see emitJsonBody) rather than a flat raw color.
-	// The `(` / `)` delimiters take sequential bracket colors.
+	// JSON.parse. The `(` / `)` delimiters take sequential bracket colors; the body
+	// gets JSON syntax highlighting (see emitJsonBody), with the braces/brackets
+	// continuing the bracket-color sequence one level inside the parens.
 	jsonBlock(node, t) {
 		emitBracketed(node, t, () => {
 			const body = node.children[1];
-			emitJsonBody(t, body, body.source.startIdx, body.source.endIdx);
+			emitJsonBody(t, body, body.source.startIdx, body.source.endIdx, bracketColorCounter);
 		});
 		return true;
 	},
