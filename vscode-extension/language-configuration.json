@@ -32,5 +32,19 @@
     ["$", "$"],
     ["*", "*"],
     ["_", "_"]
-  ]
+  ],
+  // Folding region markers double as the source for the minimap's section
+  // headers (editor.minimap.showRegionSectionHeaders, on by default), the same
+  // way C# surfaces #region directives. VSCode matches the "start" regex on each
+  // line and renders the text *after* the match as the header, so this regex
+  // consumes the leading whitespace + 1-6 hashes + trailing whitespace of a
+  // Spruce heading and leaves the heading text as the label. There is no closing
+  // token for a heading, so "end" is a never-match: headings produce minimap
+  // section headers without creating marker-based folds.
+  "folding": {
+    "markers": {
+      "start": "^[ \\t]*#{1,6}[ \\t]+",
+      "end": "(?!)"
+    }
+  }
 }
