@@ -249,6 +249,19 @@ test("call: nested calls regression - inner result reaches outer arg", async () 
 	assert.equal(await compile(lib + "(@up [(@up [hi])])", "html"), NL + "HI");
 });
 
+test("call: parsed-block body tolerates an indented closing ]]", async () =>
+{
+	// The body captured between [[ and ]] ends with the indentation that precedes
+	// the closing ]]. An html tag (a chunk that stops at the newline) leaves that
+	// whitespace-only tail (no trailing newline) unconsumed, which used to make the
+	// document re-match fail outright, dropping the whole block. A trailing
+	// spaceOrTab* on `document` mops it up.
+	assert.equal(
+		await compile(lib + "(@id [[<br>\n\t\t]])", "html"),
+		NL + "<br>\n\t\t",
+	);
+});
+
 test("call: sibling parsed-block args keep their own content (no id collision)", async () =>
 {
 	// Each [[ ... ]] is re-matched as a fresh document, so its nested paragraph

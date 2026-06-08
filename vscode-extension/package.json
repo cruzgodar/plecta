@@ -50,7 +50,10 @@
       { "id": "languageTag", "description": "Language identifier after a ``` fence" },
       { "id": "bracket1", "description": "Bracket pair color 1 (sequential)" },
       { "id": "bracket2", "description": "Bracket pair color 2 (sequential)" },
-      { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" }
+      { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" },
+      { "id": "property", "description": "JSON property key inside a ( ) block" },
+      { "id": "number", "description": "JSON number literal inside a ( ) block" },
+      { "id": "boolean", "description": "JSON true/false/null inside a ( ) block" }
     ],
     "semanticTokenModifiers": [
       { "id": "bold", "description": "Bold emphasis, composes with any token type" },
@@ -67,7 +70,10 @@
           "list": ["markup.heading"],
           "spruceFunction": ["keyword"],
           "escape": ["constant.character.escape"],
-          "languageTag": ["entity.name.type"]
+          "languageTag": ["entity.name.type"],
+          "property": ["support.type.property-name.json"],
+          "number": ["constant.numeric.json"],
+          "boolean": ["constant.language.json"]
         }
       }
     ],
@@ -83,7 +89,10 @@
           "marker:spruce": { "foreground": "#808080BF" },
           "bracket1:spruce": { "foreground": "#FFD700" },
           "bracket2:spruce": { "foreground": "#179FFF" },
-          "bracket3:spruce": { "foreground": "#179FFF" }
+          "bracket3:spruce": { "foreground": "#179FFF" },
+          "property:spruce": { "foreground": "#9CDCFE" },
+          "number:spruce": { "foreground": "#B5CEA8" },
+          "boolean:spruce": { "foreground": "#569CD6" }
         }
       }
     }

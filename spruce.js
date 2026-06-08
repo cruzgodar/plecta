@@ -123,7 +123,12 @@ function buildGrammarSource(maxHashes)
 {
 	return String.raw`
 spruce {
-  document = chunk*
+  // Trailing spaceOrTab* mops up any horizontal whitespace left after the last
+  // chunk (a blankLine needs a newline, a paragraph needs an inline char, so a
+  // whitespace-only tail with no newline matches no chunk). This happens when a
+  // parsedBlock body is re-matched as a document and the closing "]]" is indented:
+  // the body ends with that indentation, which would otherwise fail the match.
+  document = chunk* spaceOrTab*
 
   // Raw-mode start rule (see compile's raw flag): the whole document is raw,
   // so only declaration blocks and function calls are interpreted and every other

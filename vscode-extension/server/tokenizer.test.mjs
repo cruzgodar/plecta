@@ -192,22 +192,47 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
-test("json block content is string, with function-call gaps preserved", () => {
-	// @f({"k": @g[x]}) — the (...) is a JSON-block argument, colored like a raw block.
+test("json block content gets JSON highlighting, with function-call gaps preserved", () => {
+	// @f({"k": @g[x]}) — the (...) is a JSON-block argument, highlighted as JSON.
 	const src = `@f({"k": @g[x]})`;
 	const tokens = collectTokens(src);
-	const strings = tokens.filter(t => t.type === "string");
 	const fns = tokens.filter(t => t.type === "spruceFunction");
-	assert.ok(strings.length >= 1, "expected at least one string token in the JSON block");
+	// "k" is followed by `:`, so it's a property key, not a plain string value.
+	const key = tokens.find(t => t.type === "property" && src.slice(t.start, t.end) === '"k"');
+	assert.ok(key, "expected the JSON key to be a property token");
 	// The nested @g call keeps its own function coloring.
 	assert.ok(fns.find(t => src.slice(t.start, t.end) === "g"), "expected nested function token preserved");
-	// No string token should overlap a function token.
-	for (const s of strings) {
+	// No JSON token should overlap a function token.
+	const jsonToks = tokens.filter(t => ["property", "string", "number", "boolean"].includes(t.type));
+	for (const s of jsonToks) {
 		for (const f of fns) {
 			const overlap = s.start < f.end && f.start < s.end;
-			assert.ok(!overlap, `string ${JSON.stringify(s)} overlaps function ${JSON.stringify(f)}`);
+			assert.ok(!overlap, `json token ${JSON.stringify(s)} overlaps function ${JSON.stringify(f)}`);
 		}
 	}
+});
+
+test("json block highlights string values, numbers, and true/false/null", () => {
+	const src = `@f({"name": "spruce", "count": 42, "ok": true, "x": null})`;
+	const tokens = collectTokens(src);
+	const typeOf = text => {
+		const idx = src.indexOf(text);
+		return tokens.find(t => t.start === idx && t.end === idx + text.length)?.type;
+	};
+	assert.equal(typeOf('"name"'), "property", "key is a property");
+	assert.equal(typeOf('"spruce"'), "string", "string value is a string");
+	assert.equal(typeOf("42"), "number", "number value is a number");
+	assert.equal(typeOf("true"), "boolean", "true is a boolean");
+	assert.equal(typeOf("null"), "boolean", "null is a boolean");
+});
+
+test("html in a parsed block still highlights when the closing ]] is indented", () => {
+	// The re-matched body ends with the indentation before ]]; that whitespace-only
+	// tail used to fail the document re-match, dropping every token in the block.
+	const src = "(@f [[\n\t\t<div>\n\t\t<a href=\"/x\">y</a>\n\t]])";
+	const strings = collectTokens(src).filter(t => t.type === "string");
+	assert.ok(strings.find(t => src.slice(t.start, t.end) === "<div>"), "the <div> tag highlights");
+	assert.ok(strings.find(t => src.slice(t.start, t.end) === "<a href=\"/x\">y</a>"), "the <a> tag highlights");
 });
 
 test("function call inside a code block is highlighted as a function", () => {

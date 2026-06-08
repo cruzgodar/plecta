@@ -24,6 +24,9 @@ export const TOKEN_TYPES = [
 	"bracket1",
 	"bracket2",
 	"bracket3",
+	"property",
+	"number",
+	"boolean",
 ];
 
 // Bold/italic are token *modifiers*, not types: they compose with whatever type
@@ -100,6 +103,64 @@ function emitRawBody(t, bodyNode, start, end, fillType) {
 		if (cursor < end) emit(t, cursor, end, fillType);
 	}
 	for (const tok of inner) t.push(tok);
+}
+
+// JSON blocks color their content with JSON syntax highlighting (string values,
+// property keys, numbers, and the true/false/null keywords) rather than as one
+// flat raw color, EXCEPT for nested @function calls — the compiler still
+// interprets those, so they keep their function coloring like in any other raw
+// environment. We let the body's nested @funcs emit first (same as emitRawBody),
+// then lex the JSON text in the gaps between them.
+function emitJsonBody(t, bodyNode, start, end) {
+	const text = bodyNode.source.sourceString;
+	const inner = [];
+	bodyNode.collect(inner);
+	inner.sort((a, b) => a.start - b.start);
+	let cursor = start;
+	for (const tok of inner) {
+		if (tok.start > cursor) lexJson(t, text, cursor, tok.start);
+		if (tok.end > cursor) cursor = tok.end;
+	}
+	if (cursor < end) lexJson(t, text, cursor, end);
+	for (const tok of inner) t.push(tok);
+}
+
+// Minimal JSON lexer over text[a, b). Emits tokens for string literals (a key if
+// the next non-whitespace character is `:`, otherwise a value), numbers, and the
+// true/false/null literals. Structural punctuation ({}[]:,) is left uncolored so
+// it falls back to the default editor color. Tolerant of malformed input (it just
+// advances) since the body is highlighted live while being typed.
+function lexJson(t, text, a, b) {
+	let i = a;
+	while (i < b) {
+		const c = text[i];
+		if (c === '"') {
+			let j = i + 1;
+			while (j < b) {
+				if (text[j] === "\\") { j += 2; continue; }
+				if (text[j] === '"') { j++; break; }
+				j++;
+			}
+			const end = Math.min(j, b);
+			let k = end;
+			while (k < b && /\s/.test(text[k])) k++;
+			emit(t, i, end, text[k] === ":" ? "property" : "string");
+			i = j;
+		} else if (c === "-" || (c >= "0" && c <= "9")) {
+			let j = i + 1;
+			while (j < b && /[0-9.eE+\-]/.test(text[j])) j++;
+			emit(t, i, j, "number");
+			i = j;
+		} else if (c >= "a" && c <= "z") {
+			let j = i + 1;
+			while (j < b && text[j] >= "a" && text[j] <= "z") j++;
+			const word = text.slice(i, j);
+			if (word === "true" || word === "false" || word === "null") emit(t, i, j, "boolean");
+			i = j;
+		} else {
+			i++;
+		}
+	}
 }
 
 // Rule handlers. Returning true means "fully handled, don't recurse into children";
@@ -300,12 +361,13 @@ const handlers = {
 	},
 
 	// JSON blocks (`( ... )`, optionally hash-prefixed) are raw JSON text fed to
-	// JSON.parse, with nested @-calls keeping their own coloring — same treatment
-	// as a raw block. The `(` / `)` delimiters take sequential bracket colors.
+	// JSON.parse, with nested @-calls keeping their own coloring. The body gets
+	// JSON syntax highlighting (see emitJsonBody) rather than a flat raw color.
+	// The `(` / `)` delimiters take sequential bracket colors.
 	jsonBlock(node, t) {
 		emitBracketed(node, t, () => {
 			const body = node.children[1];
-			emitRawBody(t, body, body.source.startIdx, body.source.endIdx, "string");
+			emitJsonBody(t, body, body.source.startIdx, body.source.endIdx);
 		});
 		return true;
 	},
