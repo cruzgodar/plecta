@@ -88,6 +88,7 @@ function blockRules(maxHashes)
 	const parsed = [];
 	const inline = [];
 	const raw = [];
+	const json = [];
 
 	for (let n = maxHashes; n >= 1; n--)
 	{
@@ -95,11 +96,13 @@ function blockRules(maxHashes)
 		parsed.push(`"${h}[[" (~"]]${h}" any)* "]]${h}"`);
 		inline.push(`"${h}[" inlineWithoutEscapable<~"]${h}" any>+ "]${h}"`);
 		raw.push(`"${h}{" (functionCall | (~"}${h}" any))+ "}${h}"`);
+		json.push(`"${h}(" (functionCall | (~")${h}" any))+ ")${h}"`);
 	}
 
 	parsed.push(`"[[" (~"]]" any)* "]]"`);
 	inline.push(`"[" inlineWithoutEscapable<~"]" any>* "]"`);
 	raw.push(`"{" (functionCall | (~"}" any))* "}"`);
+	json.push(`"(" (functionCall | (~")" any))* ")"`);
 
 	const join = alts => alts.join("\n\t| ");
 
@@ -110,7 +113,10 @@ function blockRules(maxHashes)
 	= ${join(inline)}
 
   rawBlock
-	= ${join(raw)}`;
+	= ${join(raw)}
+
+  jsonBlock
+	= ${join(json)}`;
 }
 
 function buildGrammarSource(maxHashes)
@@ -258,7 +264,7 @@ spruce {
   
   spacePaddedBlock = space* parsedOrRawBlock
   spaceOrTabPaddedBlock = spaceOrTab* parsedOrRawBlock
-  parsedOrRawBlock = parsedBlock | parsedInlineBlock | rawBlock
+  parsedOrRawBlock = parsedBlock | parsedInlineBlock | rawBlock | jsonBlock
 
   ${blockRules(maxHashes)}
 
@@ -268,13 +274,13 @@ spruce {
 }
 
 // Find the deepest run of hashes that forms part of a block delimiter, i.e. one
-// immediately followed by an opening bracket/brace (`###[`, `##{`, ...) or
-// immediately preceded by a closing one (`]###`, `}##`, ...). The result bounds
-// how many delimiter alternatives the on-demand grammar needs.
+// immediately followed by an opening bracket/brace/paren (`###[`, `##{`, `#(`, ...)
+// or immediately preceded by a closing one (`]###`, `}##`, `)#`, ...). The result
+// bounds how many delimiter alternatives the on-demand grammar needs.
 function maxHashDepth(text)
 {
 	let max = 0;
-	const re = /#+(?=[[{])|(?<=[\]}])#+/g;
+	const re = /#+(?=[[{(])|(?<=[\]})])#+/g;
 	let match;
 	while ((match = re.exec(text)))
 	{
@@ -554,7 +560,15 @@ const desugarOperation = {
 		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
 	},
 
-	
+	// Like rawBlock: preserve the (...) delimiters and desugar the body (so nested
+	// @-calls and escapes are rewritten) so the re-parse re-recognizes it as a
+	// jsonBlock argument. getCode wraps the body in JSON.parse(...) at the call site.
+	jsonBlock(start, body, end)
+	{
+		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
+	},
+
+
 
 	parsedBlockEscapable(character)
 	{
@@ -624,6 +638,20 @@ function escapeForTemplate(s)
 		.replace(/\$\{/g, "\\${");
 }
 
+// A function-call argument block compiles to a JS expression. parsed/inline/raw
+// blocks become a template literal so their text (and any nested `${...}` call
+// results) flows through as a string. A jsonBlock instead runs that same text
+// through JSON.parse, so the function receives a real number/boolean/array/object
+// rather than a string. `block` is the parsedOrRawBlock node; its first child is
+// the matched alternative, whose rule name tells the two paths apart.
+function compileArgument(block)
+{
+	const inner = block.getCode();
+	return block.child(0).ctorName === "jsonBlock"
+		? `JSON.parse(\`${inner}\`)`
+		: "`" + inner + "`";
+}
+
 const getCodeOperation = {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
@@ -657,7 +685,7 @@ const getCodeOperation = {
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
 		const functionArguments = spacePaddedBlocks.children
-			.map(block => "`" + block.getCode() + "`")
+			.map(block => block.getCode())
 			.join(",");
 
 		const nameCode = name.getCode();
@@ -682,7 +710,7 @@ const getCodeOperation = {
 		locationsByStartIdx[startIdx] = functionCallLocations[nextGetCodeId++];
 
 		const functionArguments = spaceOrTabPaddedBlocks.children
-			.map(block => "`" + block.getCode() + "`")
+			.map(block => block.getCode())
 			.join(",");
 
 		const nameCode = name.getCode();
@@ -711,9 +739,16 @@ const getCodeOperation = {
 		return this.sourceString;
 	},
 
+	// Both padded-block forms are only ever a function-call argument, so they
+	// own the wrapping: a string template literal, or JSON.parse for a jsonBlock.
 	spacePaddedBlock(_1, block)
 	{
-		return block.getCode();
+		return compileArgument(block);
+	},
+
+	spaceOrTabPaddedBlock(_1, block)
+	{
+		return compileArgument(block);
 	},
 
 	parsedBlock(open, body, close)
@@ -743,6 +778,13 @@ const getCodeOperation = {
 	},
 
 	rawBlock(_1, body, _2)
+	{
+		return body.getCode();
+	},
+
+	// Same template-literal body as a raw block; compileArgument wraps it in
+	// JSON.parse(`...`) so the text is parsed into a real value at runtime.
+	jsonBlock(_1, body, _2)
 	{
 		return body.getCode();
 	},

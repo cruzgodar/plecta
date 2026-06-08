@@ -299,6 +299,17 @@ const handlers = {
 		return true;
 	},
 
+	// JSON blocks (`( ... )`, optionally hash-prefixed) are raw JSON text fed to
+	// JSON.parse, with nested @-calls keeping their own coloring — same treatment
+	// as a raw block. The `(` / `)` delimiters take sequential bracket colors.
+	jsonBlock(node, t) {
+		emitBracketed(node, t, () => {
+			const body = node.children[1];
+			emitRawBody(t, body, body.source.startIdx, body.source.endIdx, "string");
+		});
+		return true;
+	},
+
 	orderedItemStarter_numeric(node, t) {
 		emit(t, node.source.startIdx, node.source.endIdx, "list");
 		return true;

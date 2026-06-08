@@ -192,6 +192,24 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
+test("json block content is string, with function-call gaps preserved", () => {
+	// @f({"k": @g[x]}) — the (...) is a JSON-block argument, colored like a raw block.
+	const src = `@f({"k": @g[x]})`;
+	const tokens = collectTokens(src);
+	const strings = tokens.filter(t => t.type === "string");
+	const fns = tokens.filter(t => t.type === "spruceFunction");
+	assert.ok(strings.length >= 1, "expected at least one string token in the JSON block");
+	// The nested @g call keeps its own function coloring.
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "g"), "expected nested function token preserved");
+	// No string token should overlap a function token.
+	for (const s of strings) {
+		for (const f of fns) {
+			const overlap = s.start < f.end && f.start < s.end;
+			assert.ok(!overlap, `string ${JSON.stringify(s)} overlaps function ${JSON.stringify(f)}`);
+		}
+	}
+});
+
 test("function call inside a code block is highlighted as a function", () => {
 	const src = "```\nlet x = @foo[1]\n```\n";
 	const tokens = collectTokens(src);

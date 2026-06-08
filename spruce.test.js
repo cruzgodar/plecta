@@ -309,6 +309,73 @@ test("call: template-hostile arg, literal backtick in raw block (regression)", a
 
 
 // ============================================================================
+// JSON-block arguments ( ... )
+// ============================================================================
+
+// Reflects each argument's runtime type/value back out so the assertions can
+// distinguish a real number/array/object from the usual string arguments.
+const jsonLib = `@@@html
+function typeOf(x) { return Array.isArray(x) ? "array" : typeof x; }
+function show(x) { return JSON.stringify(x); }
+function addOne(n) { return String(n + 1); }
+function key(obj, k) { return String(obj[k]); }
+@@@
+`;
+
+test("json: scalar argument is parsed, not a string", async () =>
+{
+	assert.equal(await compile(jsonLib + "@typeOf(42)", "html"), NL + "number");
+	assert.equal(await compile(jsonLib + "@typeOf(true)", "html"), NL + "boolean");
+	assert.equal(await compile(jsonLib + "@typeOf(null)", "html"), NL + "object");
+});
+
+test("json: number argument is usable as a number", async () =>
+{
+	assert.equal(await compile(jsonLib + "@addOne(41)", "html"), NL + "42");
+});
+
+test("json: array argument", async () =>
+{
+	assert.equal(await compile(jsonLib + "@typeOf([1, 2, 3])", "html"), NL + "array");
+	assert.equal(await compile(jsonLib + "@show([1, 2, 3])", "html"), NL + "[1,2,3]");
+});
+
+test("json: object argument with nested structure", async () =>
+{
+	assert.equal(
+		await compile(jsonLib + `@show({"a": [1, {"b": 2}], "s": "hi"})`, "html"),
+		NL + `{"a":[1,{"b":2}],"s":"hi"}`,
+	);
+});
+
+test("json: mixes with parsed-block args in the same call", async () =>
+{
+	assert.equal(await compile(jsonLib + `@key({"x": 9})[x]`, "html"), NL + "9");
+});
+
+test("json: nested @-call interpolates into a JSON string", async () =>
+{
+	const src = `@@@html\nfunction who() { return "Alice"; }\nfunction show(x) { return JSON.stringify(x); }\n@@@\n@show({"who": "@who"})`;
+	assert.equal(await compile(src, "html"), NL + `{"who":"Alice"}`);
+});
+
+test("json: @) escapes a literal close paren inside a string", async () =>
+{
+	assert.equal(await compile(jsonLib + `@show([":@)"])`, "html"), NL + `[":)"]`);
+});
+
+test("json: hashed delimiters let a bare ) stay literal", async () =>
+{
+	assert.equal(await compile(jsonLib + `@show#([":) "])#`, "html"), NL + `[":) "]`);
+});
+
+test("json: invalid JSON rejects the compile", async () =>
+{
+	await assert.rejects(() => compile(jsonLib + "@show([1, 2,])", "html"));
+});
+
+
+// ============================================================================
 // Escapes
 // ============================================================================
 
