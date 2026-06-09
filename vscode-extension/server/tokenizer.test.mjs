@@ -192,6 +192,28 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
+test("parsed block inside a raw block keeps its body parsed, not raw", () => {
+	// @{ before @f[[ hello *world* ]] after } — the [[ ]] argument is a parsed
+	// sub-document, so its plain text " hello " must NOT take the raw string color,
+	// while the raw text " before " / " after " around the call still does.
+	const src = "@{ before @f[[ hello *world* ]] after }";
+	const tokens = collectTokens(src);
+	const strings = tokens.filter(t => t.type === "string");
+	const stringText = s => src.slice(s.start, s.end);
+	// The raw text outside the call stays string-colored.
+	assert.ok(strings.find(s => stringText(s) === " before "), "raw text before the call is string");
+	assert.ok(strings.find(s => stringText(s) === " after "), "raw text after the call is string");
+	// No string token may fall inside the parsed block body (offsets 14..29).
+	const bodyStart = src.indexOf("[[") + 2;
+	const bodyEnd = src.indexOf("]]");
+	for (const s of strings) {
+		const inside = s.start >= bodyStart && s.end <= bodyEnd;
+		assert.ok(!inside, `string ${JSON.stringify(stringText(s))} leaked into the parsed block body`);
+	}
+	// The emphasis inside the parsed block is still highlighted.
+	assert.ok(tokens.find(t => t.type === "italic"), "italic inside the parsed block preserved");
+});
+
 test("json block highlights keys, string values, numbers, and true/false/null", () => {
 	const src = `@show({"name": "spruce", "count": 42, "ok": true, "x": null})`;
 	const tokens = collectTokens(src);

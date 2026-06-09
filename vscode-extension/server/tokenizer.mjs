@@ -91,19 +91,51 @@ function emitBracketed(node, t, collectBody, delimiterType) {
 // @funcs keep their function coloring), then — when `fillType` is given — paint
 // the leftover gaps with that raw color. Math passes no `fillType` so its body
 // stays under the embedded LaTeX grammar; only the @funcs get semantic tokens.
+//
+// The raw fill is suppressed *inside* nested @function-call spans: a call's
+// argument may be a parsedBlock, whose body is parsed (markdown) content, so its
+// plain text must stay default-colored rather than picking up the raw color. We
+// treat each top-level call as an opaque region the fill skips over; the tokens
+// emitted within it (function name, brackets, and any nested markup) stand alone.
 function emitRawBody(t, bodyNode, start, end, fillType) {
 	const inner = [];
 	bodyNode.collect(inner);
 	inner.sort((a, b) => a.start - b.start);
 	if (fillType) {
+		const callSpans = [];
+		collectCallSpans(bodyNode, callSpans);
 		let cursor = start;
 		for (const tok of inner) {
-			if (tok.start > cursor) emit(t, cursor, tok.start, fillType);
+			if (tok.start > cursor) fillOutsideCalls(t, cursor, tok.start, fillType, callSpans);
 			if (tok.end > cursor) cursor = tok.end;
 		}
-		if (cursor < end) emit(t, cursor, end, fillType);
+		if (cursor < end) fillOutsideCalls(t, cursor, end, fillType, callSpans);
 	}
 	for (const tok of inner) t.push(tok);
+}
+
+// Collect the source spans of the outermost @function calls under `node`, in
+// source order. We stop descending at each call so the span covers the whole
+// call (including any parsed-block argument) as one opaque region.
+function collectCallSpans(node, spans) {
+	if (typeof node.ctorName === "string" && node.ctorName.startsWith("functionCall")) {
+		spans.push({ start: node.source.startIdx, end: node.source.endIdx });
+		return;
+	}
+	for (const c of node.children) collectCallSpans(c, spans);
+}
+
+// Emit `fillType` over [a, b), skipping any sub-range that lies within a call
+// span (those regions are interpreted, not raw). `callSpans` is sorted by start.
+function fillOutsideCalls(t, a, b, fillType, callSpans) {
+	let cursor = a;
+	for (const span of callSpans) {
+		if (span.end <= cursor) continue;
+		if (span.start >= b) break;
+		if (span.start > cursor) emit(t, cursor, span.start, fillType);
+		if (span.end > cursor) cursor = span.end;
+	}
+	if (cursor < b) emit(t, cursor, b, fillType);
 }
 
 // Emits JSON syntax-highlighting tokens for a json-block body, matching the

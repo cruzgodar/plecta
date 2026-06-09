@@ -936,6 +936,14 @@ function renderContext(source, errorLine, highlightContent)
 	console.log(parts.join("\n"));
 }
 
+// Print the underlying JS error (e.g. "ReferenceError: g is not defined") after
+// the rendered source context. renderContext shows *where* the error is; this
+// shows *what* it is. `${ex}` yields "Name: message" without the noisy stack.
+function logErrorMessage(ex)
+{
+	console.log(`\n${RED_BOLD}${ex}${RESET}`);
+}
+
 function logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName)
 {
 	const stack = ex.stack || `${ex}`;
@@ -963,8 +971,23 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 
 		if (!location) return false;
 
+		// A malformed jsonBlock argument throws from the JSON.parse wrapping that
+		// argument, not from the function itself, so highlighting the function name
+		// would blame the wrong token. Detect that case (a SyntaxError on a line that
+		// carries a JSON.parse call) and highlight the whole call from its start
+		// column instead — the bad argument lives inside it.
+		const isJsonError = ex instanceof SyntaxError && bodyLine.includes("JSON.parse");
+
 		renderContext(source, location.lineNum, lineContent =>
 		{
+			if (isJsonError)
+			{
+				const startCol = (location.colNum ?? 1) - 1;
+				const before = lineContent.slice(0, startCol);
+				const offending = lineContent.slice(startCol);
+				return `${before}${RED_BOLD}${offending}${RESET}`;
+			}
+
 			const funcIdx = lineContent.indexOf(funcName);
 
 			if (funcIdx >= 0)
@@ -977,6 +1000,7 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 			return `${RED_BOLD}${lineContent}${RESET}`;
 		});
 
+		logErrorMessage(ex);
 		return true;
 	}
 
@@ -986,6 +1010,7 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 		{
 			const originalLine = range.originalStart + (errorLineInBody - range.generatedStart);
 			renderContext(source, originalLine, lineContent => `${RED_BOLD}${lineContent}${RESET}`);
+			logErrorMessage(ex);
 			return true;
 		}
 	}

@@ -8,8 +8,6 @@ $$
 	math
 $$
 
-@@@
-	import { testFunction } from "./testDeclarations.js";
 @@@html
 	function center(body)
 	{
@@ -44,20 +42,6 @@ $$
 Paragraph with *italic*, **bold**, ***bolditalic*** 
 `code`, $math$, $$displaystyle math$$, [link](to somewhere),
 and escaped characters: @@x @*c@*
-
-iwfb;iweufb
-@f[
-    argument
-		argument2
-]
-
-@thm[
-	name
-][[
-	body
-]]
-
-@g{ @f[h] }
 
 @testFunction#[[
 	entire paragraph
