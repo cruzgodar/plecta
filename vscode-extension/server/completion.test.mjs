@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectCompletions } from "./completion.mjs";
+import { buildImportEdits, collectCompletions } from "./completion.mjs";
 
 const labels = items => items.map(i => i.label);
 const find = (items, label) => items.find(i => i.label === label);
@@ -90,9 +90,35 @@ test("include() pulls in a module's exports", () => {
 	}
 });
 
-test("an absolute include specifier is skipped (root is unknown to the editor)", () => {
+test("a relative include resolves against a workspace root, not just the doc dir", () => {
+	// The helper sits at the project root; the document is in a subfolder and
+	// includes it the way the spruce CLI (run from the root) would resolve it.
+	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
+	try {
+		writeFileSync(join(root, "helpers.js"), "export function fromRoot() {}");
+		const docPath = join(root, "posts", "doc.sp");
+		const doc = '@@@\ninclude("./helpers.js")\n@@@\n\n@f';
+		const items = collectCompletions(doc, doc.length, { filePath: docPath, roots: [root] });
+		assert.equal(find(items, "fromRoot")?.kind, "function");
+	} finally {
+		rmSync(root, { recursive: true });
+	}
+});
+
+test("an absolute include specifier resolves against the workspace root", () => {
+	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
+	try {
+		writeFileSync(join(root, "lib.js"), "export function abs() {}");
+		const doc = '@@@\ninclude("/lib.js")\n@@@\n\n@a';
+		const items = collectCompletions(doc, doc.length, { filePath: join(root, "doc.sp"), roots: [root] });
+		assert.equal(find(items, "abs")?.kind, "function");
+	} finally {
+		rmSync(root, { recursive: true });
+	}
+});
+
+test("an unresolvable include is ignored without throwing", () => {
 	const doc = '@@@\ninclude("/lib/x.js")\n@@@\n\n@a';
-	// Should not throw and should not invent any entries from the unresolved path.
-	const items = collectCompletions(doc, doc.length, { filePath: "/some/doc.sp" });
+	const items = collectCompletions(doc, doc.length, { filePath: "/some/doc.sp", roots: [] });
 	assert.ok(Array.isArray(items));
 });

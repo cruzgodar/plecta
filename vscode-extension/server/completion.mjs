@@ -3,16 +3,19 @@
 // returned here onto LSP CompletionItems. Like tokenizer.mjs, this leans on the
 // vendored stdlib.js copy (build-and-install.sh keeps it fresh).
 //
-// Two completion contexts, matching how names resolve at compile time:
+// Completion contexts, matching how names resolve at compile time:
 //   * Inside a `@@@ ... @@@` declaration block the body is plain JS, so bare
 //     identifiers fall through to globalThis — we offer the reserved globals
 //     (the format stdlib plus include/filePath/JSON5) alongside anything the
-//     document has already defined or included.
+//     document has already defined, included, or imported.
 //   * After an `@` function call we offer the reserved *functions* (the stdlib
-//     renderers) plus the document's defined/included names, since `@name`
-//     invokes whatever `name` resolves to in module scope.
-import { readFileSync } from "fs";
-import { dirname, resolve as resolvePath } from "path";
+//     renderers) plus the document's defined/included/imported names, since
+//     `@name` invokes whatever `name` resolves to in module scope.
+// In both contexts we also offer exports from any *not-yet-imported* JS file in
+// the workspace; accepting one carries an auto-import edit (see buildImportEdits)
+// that adds the ESM import to a declaration block.
+import { readdirSync, readFileSync } from "fs";
+import { dirname, join, relative, resolve as resolvePath, sep } from "path";
 import { stdlib } from "./stdlib.js";
 
 // Reserved names split by whether they're callable. Derived from the stdlib so
@@ -39,6 +42,14 @@ const EXTRA_GLOBALS = [
 	{ label: "JSON5", kind: "module", detail: "JSON5 parser" },
 ];
 
+// Every reserved name, regardless of context — used to keep auto-import
+// suggestions from shadowing a built-in that's already in scope.
+const RESERVED_NAMES = new Set([
+	...reservedFunctions.keys(),
+	...reservedConstants,
+	...EXTRA_GLOBALS.map(g => g.label),
+]);
+
 // Pull the parameter list out of a function's source for display, e.g. a stdlib
 // method `heading(body, headingNumber) { ... }` -> "(body, headingNumber)".
 function signatureOf(fn) {
@@ -62,18 +73,18 @@ function reservedFunctionItems() {
 	return [...reservedFunctions].map(([name, sig]) => ({ label: name, kind: "function", detail: `reserved ${sig}` }));
 }
 
-// Bodies of every `@@@ ... @@@` declaration block, as { start, end } offsets into
-// `text` (the range between the opener line's newline and the closer line). The
-// scan is line-based so it survives a document that doesn't fully parse mid-edit.
-// A bare `@@@` line closes a block; a `@@@tag` line while already inside both
-// closes the current block and opens the next (the grammar's soft terminator).
-// An unterminated trailing block runs to end-of-document so completion still
-// works while the closing fence is being typed.
-function declarationBodies(text) {
-	const bodies = [];
+// Every `@@@ ... @@@` declaration block, as offsets into `text`: `openerStart`
+// (start of the opener line), `bodyStart`/`bodyEnd` (the JS body between the
+// opener line's newline and the closer line), and `tag` (the format after `@@@`,
+// "" for a non-targeted block). The scan is line-based so it survives a document
+// that doesn't fully parse mid-edit. A bare `@@@` line closes a block; a `@@@tag`
+// line while already inside both closes the current block and opens the next (the
+// grammar's soft terminator). An unterminated trailing block runs to end of
+// document so completion still works while the closing fence is being typed.
+function declarationBlocks(text) {
+	const blocks = [];
 	const fence = /^[ \t]*@@@[ \t]*([A-Za-z0-9]*)[ \t]*$/;
-	let inside = false;
-	let bodyStart = -1;
+	let open = null;
 	let pos = 0;
 	for (const line of text.split("\n")) {
 		const lineStart = pos;
@@ -82,25 +93,24 @@ function declarationBodies(text) {
 		const m = fence.exec(line.replace(/\r$/, ""));
 		if (m) {
 			const tag = m[1];
-			if (!inside) {
-				inside = true;
-				bodyStart = nextStart;
+			if (!open) {
+				open = { openerStart: lineStart, bodyStart: nextStart, tag };
 			} else if (tag === "") {
-				bodies.push({ start: bodyStart, end: lineStart });
-				inside = false;
+				blocks.push({ ...open, bodyEnd: lineStart });
+				open = null;
 			} else {
-				bodies.push({ start: bodyStart, end: lineStart });
-				bodyStart = nextStart;
+				blocks.push({ ...open, bodyEnd: lineStart });
+				open = { openerStart: lineStart, bodyStart: nextStart, tag };
 			}
 		}
 		pos = nextStart;
 	}
-	if (inside) bodies.push({ start: bodyStart, end: text.length });
-	return bodies;
+	if (open) blocks.push({ ...open, bodyEnd: text.length });
+	return blocks;
 }
 
 function inDeclarationBlock(text, offset) {
-	return declarationBodies(text).some(b => offset >= b.start && offset <= b.end);
+	return declarationBlocks(text).some(b => offset >= b.bodyStart && offset <= b.bodyEnd);
 }
 
 // The identifier prefix of a `@name` call ending at `offset`, or null when the
@@ -118,12 +128,14 @@ const FUNC_DECL = /(?:^|[\s;}])(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Z
 const VAR_FUNC = /(?:^|[\s;}])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/g;
 const VAR_ANY = /(?:^|[\s;}])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g;
 const INCLUDE_CALL = /\binclude\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
+const IMPORT_STMT = /\bimport\s+([^;'"]*?)\s+from\s*["']([^"']+)["']/g;
 
-// Names the document defines: top-level function/const declarations in any
-// declaration block, plus every export pulled in by an include() call. Returned
-// as a name -> item Map so callers can dedupe against reserved names; functions
-// win over plain variables when a name appears both ways.
-function definedNames(text, filePath) {
+// Names the document makes available in module scope: top-level function/const
+// declarations in any declaration block, every export pulled in by an include()
+// call, and every binding of an `import ... from` statement. Returned as a
+// name -> item Map so callers can dedupe; functions win over plain variables
+// when a name appears both ways.
+function definedNames(text, filePath, roots) {
 	const items = new Map();
 	const add = (name, kind, detail) => {
 		const existing = items.get(name);
@@ -131,15 +143,23 @@ function definedNames(text, filePath) {
 		items.set(name, { label: name, kind, detail });
 	};
 
-	for (const { start, end } of declarationBodies(text)) {
-		const body = text.slice(start, end);
+	for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
+		const body = text.slice(bodyStart, bodyEnd);
 		for (const m of body.matchAll(FUNC_DECL)) add(m[1], "function", "defined in document");
 		for (const m of body.matchAll(VAR_FUNC)) add(m[1], "function", "defined in document");
 		for (const m of body.matchAll(VAR_ANY)) add(m[1], "variable", "defined in document");
+
+		for (const m of body.matchAll(IMPORT_STMT)) {
+			const kinds = new Map(moduleExports(m[2], filePath, roots).map(e => [e.label, e.kind]));
+			for (const { local, imported } of parseImportClause(m[1])) {
+				const kind = imported && imported !== "default" ? (kinds.get(imported) ?? "variable") : "variable";
+				add(local, kind, `imported from ${m[2]}`);
+			}
+		}
 	}
 
 	for (const m of text.matchAll(INCLUDE_CALL)) {
-		for (const exp of includedExports(m[1], filePath)) {
+		for (const exp of moduleExports(m[1], filePath, roots)) {
 			add(exp.label, exp.kind, `included from ${m[1]}`);
 		}
 	}
@@ -147,20 +167,66 @@ function definedNames(text, filePath) {
 	return items;
 }
 
-// Statically read the named exports of an included module without executing it
-// (the LSP must stay side-effect-free): function/const exports and re-export
-// lists. Absolute "/x" specifiers need the --root the editor doesn't know about,
-// so they're skipped; default exports aren't usable as bare names.
-function includedExports(specifier, filePath) {
-	if (!filePath || specifier.startsWith("/")) return [];
+// Local bindings introduced by an `import` clause (the text between `import` and
+// `from`), each as { local, imported }: `imported` is the source export name,
+// "default" for a default import, or null for a `* as ns` namespace import.
+function parseImportClause(clause) {
+	const bindings = [];
+	const ns = /\*\s+as\s+([\w$]+)/.exec(clause);
+	if (ns) bindings.push({ local: ns[1], imported: null });
 
-	let src;
-	try {
-		src = readFileSync(resolvePath(dirname(filePath), specifier), "utf8");
-	} catch {
-		return [];
+	const group = /\{([^}]*)\}/.exec(clause);
+	if (group) {
+		for (const part of group[1].split(",")) {
+			const seg = /^\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*$/.exec(part);
+			if (seg) bindings.push({ local: seg[2] || seg[1], imported: seg[1] });
+		}
 	}
 
+	const head = clause.replace(/\{[^}]*\}/, "").replace(/\*\s+as\s+[\w$]+/, "").replace(/,/g, " ").trim();
+	const def = /^([\w$]+)$/.exec(head);
+	if (def) bindings.push({ local: def[1], imported: "default" });
+
+	return bindings;
+}
+
+// The filesystem paths an include()/import specifier might resolve to, mirroring
+// makeIncludeResolver in spruce.js: a relative specifier resolves against the
+// cwd spruce runs from — which the editor can't know, so we try the document's
+// own directory and every workspace root — and an absolute "/x" specifier
+// resolves against a root (the compiler's --root). Bare specifiers (node
+// packages) are left to default resolution and skipped here.
+function includeCandidates(specifier, filePath, roots) {
+	if (specifier.startsWith("/")) {
+		return roots.map(root => join(root, specifier));
+	}
+	if (specifier.startsWith(".")) {
+		const bases = [];
+		if (filePath) bases.push(dirname(filePath));
+		bases.push(...roots);
+		return bases.map(base => resolvePath(base, specifier));
+	}
+	return [];
+}
+
+// Resolve a specifier to a file and statically read its named exports, or [] if
+// it can't be resolved/read. Wraps extractExports for the include() and import
+// code paths.
+function moduleExports(specifier, filePath, roots) {
+	for (const candidate of includeCandidates(specifier, filePath, roots)) {
+		try {
+			return extractExports(readFileSync(candidate, "utf8"));
+		} catch {
+			// Try the next candidate base.
+		}
+	}
+	return [];
+}
+
+// Statically read a module's named exports without executing it (the LSP must
+// stay side-effect-free): function/const exports and re-export lists. Default
+// exports aren't usable as bare names, so they're dropped.
+function extractExports(src) {
 	const items = new Map();
 	for (const m of src.matchAll(/export\s+(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/g)) {
 		items.set(m[1], { label: m[1], kind: "function" });
@@ -180,6 +246,109 @@ function includedExports(specifier, filePath) {
 	return [...items.values()];
 }
 
+// --- Workspace scan for auto-import candidates -----------------------------
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", "coverage"]);
+const MAX_FILES = 1500;
+
+// A `./`-relative specifier from a workspace root to a file, using POSIX
+// separators (what an ESM import wants). Imports inside a declaration block
+// resolve against the cwd spruce runs from — normally the workspace root — so a
+// root-relative path is the cwd-stable choice, matching include()'s resolution.
+function relSpecifier(root, file) {
+	let rel = relative(root, file).split(sep).join("/");
+	if (!rel.startsWith(".")) rel = "./" + rel;
+	return rel;
+}
+
+function walkJsFiles(dir, root, out, budget) {
+	let entries;
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (budget.count >= MAX_FILES) return;
+		if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			if (!SKIP_DIRS.has(entry.name)) walkJsFiles(full, root, out, budget);
+		} else if (entry.isFile() && /\.(mjs|cjs|js)$/.test(entry.name)) {
+			budget.count++;
+			let src;
+			try {
+				src = readFileSync(full, "utf8");
+			} catch {
+				continue;
+			}
+			const specifier = relSpecifier(root, full);
+			for (const exp of extractExports(src)) {
+				out.push({ label: exp.label, kind: exp.kind, specifier });
+			}
+		}
+	}
+}
+
+// Walking the tree on every keystroke would be wasteful; the client filters a
+// returned list locally as the user types, so a short TTL cache is plenty.
+let exportCache = { key: null, time: 0, items: [] };
+
+function collectWorkspaceExports(roots) {
+	const key = roots.join("\0");
+	const now = Date.now();
+	if (exportCache.key === key && now - exportCache.time < 5000) return exportCache.items;
+
+	const items = [];
+	const budget = { count: 0 };
+	for (const root of roots) walkJsFiles(root, root, items, budget);
+
+	exportCache = { key, time: now, items };
+	return items;
+}
+
+// --- Auto-import edit -------------------------------------------------------
+
+function escapeRe(s) {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// The text edits (offset-based, for server.mjs to turn into LSP TextEdits) that
+// add `import { name } from "<specifier>"` to the document. Per the requested
+// behavior we always target a *non-targeted* (`@@@` with no format) declaration
+// block: extend an existing import from the same specifier, else add an import
+// line at the top of the first such block, else create a new block at the top of
+// the document. Returns [] when the name is already imported from that specifier.
+export function buildImportEdits(text, specifier, name) {
+	const blocks = declarationBlocks(text).filter(b => b.tag === "");
+	const importLine = `import { ${name} } from "${specifier}";`;
+
+	if (blocks.length === 0) {
+		return [{ start: 0, end: 0, newText: `@@@\n${importLine}\n@@@\n\n` }];
+	}
+
+	const importRe = new RegExp(`import\\s+(?:[\\w$]+\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*["']${escapeRe(specifier)}["']`);
+	for (const block of blocks) {
+		const body = text.slice(block.bodyStart, block.bodyEnd);
+		const m = importRe.exec(body);
+		if (!m) continue;
+
+		if (new RegExp(`\\b${escapeRe(name)}\\b`).test(m[1])) return []; // already imported
+
+		// Insert into the existing named group, just after its last binding.
+		const groupStart = m.index + m[0].indexOf("{") + 1;
+		const braceRel = m.index + m[0].indexOf("}");
+		let k = braceRel;
+		while (k > groupStart && /\s/.test(body[k - 1])) k--;
+		const at = block.bodyStart + k;
+		const newText = k > groupStart ? `, ${name}` : `${name} `;
+		return [{ start: at, end: at, newText }];
+	}
+
+	// No import from this specifier yet: add one at the top of the first block.
+	return [{ start: blocks[0].bodyStart, end: blocks[0].bodyStart, newText: `${importLine}\n` }];
+}
+
 // Merge reserved items with the document's defined names, dropping any reserved
 // entry the document redefines (a user override shadows the built-in).
 function withDefined(reserved, defined) {
@@ -187,18 +356,41 @@ function withDefined(reserved, defined) {
 	return out.concat([...defined.values()]);
 }
 
-// Returns neutral completion items ({ label, kind, detail }) for the cursor at
-// `offset`, or [] when the cursor isn't in a completion context.
-export function collectCompletions(text, offset, { filePath = null } = {}) {
-	const defined = definedNames(text, filePath);
+// Workspace exports for names not already in scope, deduped by name+specifier so
+// the same symbol from two files stays distinguishable. Each carries `autoImport`
+// (the specifier) so the server can attach the import edit on accept.
+function autoImportItems(defined, roots) {
+	const seen = new Set();
+	const items = [];
+	for (const exp of collectWorkspaceExports(roots)) {
+		if (RESERVED_NAMES.has(exp.label) || defined.has(exp.label)) continue;
+		const key = `${exp.label}\0${exp.specifier}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		items.push({
+			label: exp.label,
+			kind: exp.kind,
+			detail: `auto-import from ${exp.specifier}`,
+			autoImport: { specifier: exp.specifier },
+		});
+	}
+	return items;
+}
 
+// Returns neutral completion items for the cursor at `offset`, or [] when the
+// cursor isn't in a completion context. Auto-import items carry an `autoImport`
+// field; the rest are plain { label, kind, detail }.
+export function collectCompletions(text, offset, { filePath = null, roots = [] } = {}) {
+	const defined = definedNames(text, filePath, roots);
+
+	let items;
 	if (inDeclarationBlock(text, offset)) {
-		return withDefined(reservedGlobalItems(), defined);
+		items = withDefined(reservedGlobalItems(), defined);
+	} else if (callPrefix(text, offset) !== null) {
+		items = withDefined(reservedFunctionItems(), defined);
+	} else {
+		return [];
 	}
 
-	if (callPrefix(text, offset) !== null) {
-		return withDefined(reservedFunctionItems(), defined);
-	}
-
-	return [];
+	return items.concat(autoImportItems(defined, roots));
 }
