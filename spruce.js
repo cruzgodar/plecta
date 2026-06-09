@@ -2,6 +2,7 @@
 import { randomUUID } from "crypto";
 import { realpathSync, unlinkSync } from "fs";
 import { readFile, unlink, writeFile } from "fs/promises";
+import JSON5 from "json5";
 import { register } from "module";
 import * as ohm from "ohm-js";
 import { extname, join, resolve as resolvePath } from "path";
@@ -567,7 +568,7 @@ const desugarOperation = {
 
 	// Like rawBlock: preserve the (...) delimiters and desugar the body (so nested
 	// @-calls and escapes are rewritten) so the re-parse re-recognizes it as a
-	// jsonBlock argument. getCode wraps the body in JSON.parse(...) at the call site.
+	// jsonBlock argument. getCode wraps the body in JSON5.parse(...) at the call site.
 	jsonBlock(start, body, end)
 	{
 		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
@@ -646,14 +647,14 @@ function escapeForTemplate(s)
 // A function-call argument block compiles to a JS expression. parsed/inline/raw
 // blocks become a template literal so their text (and any nested `${...}` call
 // results) flows through as a string. A jsonBlock instead runs that same text
-// through JSON.parse, so the function receives a real number/boolean/array/object
+// through JSON5.parse, so the function receives a real number/boolean/array/object
 // rather than a string. `block` is the parsedOrRawBlock node; its first child is
 // the matched alternative, whose rule name tells the two paths apart.
 function compileArgument(block)
 {
 	const inner = block.getCode();
 	return block.child(0).ctorName === "jsonBlock"
-		? `JSON.parse(\`${inner}\`)`
+		? `JSON5.parse(\`${inner}\`)`
 		: "`" + inner + "`";
 }
 
@@ -745,7 +746,7 @@ const getCodeOperation = {
 	},
 
 	// Both padded-block forms are only ever a function-call argument, so they
-	// own the wrapping: a string template literal, or JSON.parse for a jsonBlock.
+	// own the wrapping: a string template literal, or JSON5.parse for a jsonBlock.
 	spacePaddedBlock(_1, block)
 	{
 		return compileArgument(block);
@@ -788,7 +789,7 @@ const getCodeOperation = {
 	},
 
 	// Same template-literal body as a raw block; compileArgument wraps it in
-	// JSON.parse(`...`) so the text is parsed into a real value at runtime.
+	// JSON5.parse(`...`) so the text is parsed into a real value at runtime.
 	jsonBlock(_1, body, _2)
 	{
 		return body.getCode();
@@ -971,12 +972,12 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 
 		if (!location) return false;
 
-		// A malformed jsonBlock argument throws from the JSON.parse wrapping that
+		// A malformed jsonBlock argument throws from the JSON5.parse wrapping that
 		// argument, not from the function itself, so highlighting the function name
 		// would blame the wrong token. Detect that case (a SyntaxError on a line that
-		// carries a JSON.parse call) and highlight the whole call from its start
+		// carries a JSON5.parse call) and highlight the whole call from its start
 		// column instead — the bad argument lives inside it.
-		const isJsonError = ex instanceof SyntaxError && bodyLine.includes("JSON.parse");
+		const isJsonError = ex instanceof SyntaxError && bodyLine.includes("JSON5.parse");
 
 		renderContext(source, location.lineNum, lineContent =>
 		{
@@ -1132,6 +1133,11 @@ async function _compileImpl(input, outputFormat, filePath, root, raw)
 	// (and any files it imports, which share this globalThis) can read it by bare
 	// name. Splatted through setGlobal so it's restored when compile() returns.
 	setGlobal("filePath", filePath);
+
+	// jsonBlock arguments compile to JSON5.parse(...) calls in the generated
+	// module, which can only see globals — splat JSON5 in alongside the stdlib
+	// and restore it when compile() returns.
+	setGlobal("JSON5", JSON5);
 
 	try
 	{

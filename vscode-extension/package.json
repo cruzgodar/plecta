@@ -100,6 +100,7 @@
     "test": "node --test server/tokenizer.test.mjs"
   },
   "dependencies": {
+    "json5": "^2.2.3",
     "ohm-js": "^17.5.0",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",

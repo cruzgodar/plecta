@@ -24,6 +24,7 @@
   },
   "homepage": "https://github.com/cruzgodar/spruce#readme",
   "dependencies": {
+    "json5": "^2.2.3",
     "ohm-js": "^17.5.0"
   }
 }

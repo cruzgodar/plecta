@@ -384,7 +384,13 @@ test("json: hashed delimiters let a bare ) stay literal", async () =>
 
 test("json: invalid JSON rejects the compile", async () =>
 {
-	await assert.rejects(() => compile(jsonLib + "@show([1, 2,])", "html"));
+	await assert.rejects(() => compile(jsonLib + "@show([1 2])", "html"));
+});
+
+test("json: JSON5 leniency accepts trailing commas and unquoted keys", async () =>
+{
+	assert.equal(await compile(jsonLib + `@show([1, 2,])`, "html"), NL + `[1,2]`);
+	assert.equal(await compile(jsonLib + `@show({a: 1,})`, "html"), NL + `{"a":1}`);
 });
 
 

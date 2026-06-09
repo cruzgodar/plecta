@@ -6,3 +6,4 @@ vscode-extension/.vscodeignore
 vscode-extension/server/spruce.js
 vscode-extension/server/stdlib.js
 vscode-extension/*.vsix
+/node_modules
