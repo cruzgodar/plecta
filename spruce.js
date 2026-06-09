@@ -1103,6 +1103,11 @@ async function _compileImpl(input, outputFormat, filePath, root, raw)
 	// fragment's base dir (cwd, matching runCode), absolute "/x" against --root.
 	setGlobal("include", makeInclude(makeIncludeResolver(process.cwd(), root), setGlobal));
 
+	// Expose the input's absolute path as a global constant so the document body
+	// (and any files it imports, which share this globalThis) can read it by bare
+	// name. Splatted through setGlobal so it's restored when compile() returns.
+	setGlobal("filePath", filePath);
+
 	try
 	{
 		// Build the grammar for this input's hash depth and make it active before
@@ -1131,7 +1136,7 @@ async function _compileImpl(input, outputFormat, filePath, root, raw)
 			const hook = hookOverrides[name] ?? formatStdlib?.[name];
 			if (typeof hook === "function")
 			{
-				result = hook(result, filePath);
+				result = hook(result);
 			}
 		}
 

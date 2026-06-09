@@ -1,7 +1,7 @@
 const r = String.raw;
 
 const html = {
-	document(body, filePath)
+	document(body)
 	{
 		return r`<!DOCTYPE html>
 <html lang="en">
@@ -97,7 +97,7 @@ ${body}
 
 
 const tex = {
-	document(body, filePath)
+	document(body)
 	{
 		return r`\documentclass{article}
 \usepackage[T1]{fontenc}

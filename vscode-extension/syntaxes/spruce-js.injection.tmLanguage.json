@@ -4,10 +4,16 @@
 	"injectionSelector": "L:meta.embedded.block.javascript.spruce -comment -string",
 	"patterns": [
 		{ "include": "#include" },
+		{ "include": "#filePath" },
 		{ "include": "#reservedDefinitions" },
 		{ "include": "#reservedNames" }
 	],
 	"repository": {
+		"filePath": {
+			"comment": "filePath is a read-only global constant spruce injects with the input's absolute path, highlighted as a language variable rather than a stdlib function.",
+			"match": "(?<![.$[:alnum:]_])filePath\\b",
+			"name": "variable.language.filepath.spruce"
+		},
 		"reservedDefinitions": {
 			"match": "(?<![.$[:alnum:]_])(function)\\s+(inlineDisplayMath|unorderedList|orderedList|displayMath|boldItalic|codeBlock|paragraph|document|heading|italic|math|bold|code|link|text)\\b",
 			"captures": {
