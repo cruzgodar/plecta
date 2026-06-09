@@ -28,6 +28,7 @@ export const TOKEN_TYPES = [
 	"jsonString",
 	"number",
 	"boolean",
+	"comment",
 ];
 
 // Bold/italic are token *modifiers*, not types: they compose with whatever type
@@ -138,15 +139,16 @@ function fillOutsideCalls(t, a, b, fillType, callSpans) {
 	if (cursor < b) emit(t, cursor, b, fillType);
 }
 
-// Emits JSON syntax-highlighting tokens for a json-block body, matching the
-// editor's default JSON colors as closely as we can: property keys, string
-// values, numbers, and true/false/null each get their own scope (mapped to the
-// standard JSON TextMate scopes in package.json), and braces/brackets take the
-// sequential bracket-pair colors, continuing one level deeper than the block's
-// own parens (`baseColor`). Nested @function calls — which the compiler still
-// interprets — keep their function coloring: we collect their tokens first and
-// treat each as an opaque span the JSON scan skips over, so e.g. an @-call inside
-// a string value doesn't derail the scan.
+// Emits JSON5 syntax-highlighting tokens for a json-block body, matching the
+// editor's default JSON colors as closely as we can: property keys (quoted or
+// bare identifiers), string values (single- or double-quoted), numbers, and the
+// keyword constants (true/false/null/Infinity/NaN) each get their own scope
+// (mapped to the standard JSON TextMate scopes in package.json), comments take
+// the comment scope, and braces/brackets take the sequential bracket-pair colors,
+// continuing one level deeper than the block's own parens (`baseColor`). Nested
+// @function calls — which the compiler still interprets — keep their function
+// coloring: we collect their tokens first and treat each as an opaque span the
+// scan skips over, so e.g. an @-call inside a string value doesn't derail it.
 function emitJsonBody(t, bodyNode, start, end, baseColor) {
 	const text = bodyNode.source.sourceString;
 	const calls = [];
@@ -178,21 +180,32 @@ function scanJson(t, text, start, end, calls, baseColor) {
 			if (depth > 0) depth--;
 			emit(t, i, i + 1, bracketType(baseColor + depth));
 			i++;
-		} else if (c === '"') {
-			const strEnd = scanJsonString(text, i, end, calls);
+		} else if (c === '"' || c === "'") {
+			// JSON5 allows single- or double-quoted strings.
+			const strEnd = scanJsonString(text, i, end, calls, c);
 			// A string is a property key iff the next significant char is a colon.
 			const isKey = nextSignificant(text, strEnd, end, calls) === ":";
 			emit(t, i, Math.min(strEnd, end), isKey ? "property" : "jsonString");
 			i = strEnd;
-		} else if (c === "-" || (c >= "0" && c <= "9")) {
+		} else if (c === "/" && (text[i + 1] === "/" || text[i + 1] === "*")) {
+			// JSON5 line (`//`) and block (`/* */`) comments. Painted around any
+			// nested @-call span so a comment token never overlaps a function token.
+			const cmtEnd = scanComment(text, i, end);
+			fillOutsideCalls(t, i, cmtEnd, "comment", calls);
+			i = cmtEnd;
+		} else if (isNumberStart(text, i, end)) {
 			const numEnd = scanJsonNumber(text, i, end);
 			emit(t, i, numEnd, "number");
 			i = numEnd;
-		} else if (c >= "a" && c <= "z") {
+		} else if (isIdentStart(c)) {
+			// A bare identifier is a JSON5 property key (when followed by `:`); the
+			// only bare words valid as values are the keyword constants below.
 			let j = i + 1;
-			while (j < end && text[j] >= "a" && text[j] <= "z") j++;
+			while (j < end && isIdentPart(text[j])) j++;
 			const word = text.slice(i, j);
-			if (word === "true" || word === "false" || word === "null") emit(t, i, j, "boolean");
+			if (nextSignificant(text, j, end, calls) === ":") emit(t, i, j, "property");
+			else if (word === "true" || word === "false" || word === "null") emit(t, i, j, "boolean");
+			else if (word === "Infinity" || word === "NaN") emit(t, i, j, "number");
 			i = j;
 		} else {
 			// Whitespace, ':' and ',' (default-colored), or stray characters.
@@ -201,17 +214,52 @@ function scanJson(t, text, start, end, calls, baseColor) {
 	}
 }
 
-// Scans a JSON string starting at the opening quote `i`; returns the offset just
-// past the closing quote (or `end` if unterminated). Skips backslash escapes and
-// any nested @-call span (an @-call may sit inside the string literal).
-function scanJsonString(text, i, end, calls) {
+// JSON5 identifier-name characters (an approximation of the ECMAScript rules,
+// covering the ASCII set documents actually use for keys).
+function isIdentStart(c) {
+	return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === "$";
+}
+function isIdentPart(c) {
+	return isIdentStart(c) || (c >= "0" && c <= "9");
+}
+
+// True if a number literal begins at `i`: a digit, a `.`/sign before a digit, or
+// a sign before `Infinity`/`NaN` (e.g. `-Infinity`). Bare `Infinity`/`NaN` start
+// with a letter, so they fall to the identifier branch instead.
+function isNumberStart(text, i, end) {
+	const c = text[i];
+	if (c >= "0" && c <= "9") return true;
+	const d = text[i + 1];
+	if (c === ".") return d >= "0" && d <= "9";
+	if (c === "+" || c === "-") return (d >= "0" && d <= "9") || d === "." || d === "I" || d === "N";
+	return false;
+}
+
+// Scans a `//` line comment or `/* */` block comment from `i`; returns the offset
+// just past it (or `end` if a block comment is unterminated).
+function scanComment(text, i, end) {
+	if (text[i + 1] === "/") {
+		let j = i + 2;
+		while (j < end && text[j] !== "\n" && text[j] !== "\r") j++;
+		return j;
+	}
+	let j = i + 2;
+	while (j < end && !(text[j] === "*" && text[j + 1] === "/")) j++;
+	return Math.min(j + 2, end);
+}
+
+// Scans a string starting at the opening quote `i` (`quote` is `"` or `'`);
+// returns the offset just past the matching closing quote (or `end` if
+// unterminated). Skips backslash escapes (including line continuations) and any
+// nested @-call span (an @-call may sit inside the string literal).
+function scanJsonString(text, i, end, calls, quote) {
 	let j = i + 1;
 	while (j < end) {
 		const span = callAt(calls, j);
 		if (span) { j = span.end; continue; }
 		const ch = text[j];
 		if (ch === "\\") { j += 2; continue; }
-		if (ch === '"') return j + 1;
+		if (ch === quote) return j + 1;
 		j++;
 	}
 	return end;
@@ -231,10 +279,19 @@ function nextSignificant(text, from, end, calls) {
 	return null;
 }
 
-// Scans a JSON number (optional sign, integer, fraction, exponent) from `i`.
+// Scans a JSON5 number from `i`: an optional sign, then `Infinity`/`NaN`, a hex
+// literal (`0x...`), or a decimal with optional leading/trailing point and
+// exponent (`.5`, `5.`, `1e3`).
 function scanJsonNumber(text, i, end) {
 	let j = i;
-	if (text[j] === "-") j++;
+	if (text[j] === "+" || text[j] === "-") j++;
+	if (text.startsWith("Infinity", j)) return j + 8;
+	if (text.startsWith("NaN", j)) return j + 3;
+	if (text[j] === "0" && (text[j + 1] === "x" || text[j + 1] === "X")) {
+		j += 2;
+		while (j < end && /[0-9a-fA-F]/.test(text[j])) j++;
+		return j;
+	}
 	while (j < end && text[j] >= "0" && text[j] <= "9") j++;
 	if (text[j] === ".") { j++; while (j < end && text[j] >= "0" && text[j] <= "9") j++; }
 	if (text[j] === "e" || text[j] === "E") {
@@ -442,9 +499,9 @@ const handlers = {
 		return true;
 	},
 
-	// JSON blocks (`( ... )`, optionally hash-prefixed) are raw JSON text fed to
-	// JSON.parse. The `(` / `)` delimiters take sequential bracket colors; the body
-	// gets JSON syntax highlighting (see emitJsonBody), with the braces/brackets
+	// JSON blocks (`( ... )`, optionally hash-prefixed) are raw JSON5 text fed to
+	// JSON5.parse. The `(` / `)` delimiters take sequential bracket colors; the body
+	// gets JSON5 syntax highlighting (see emitJsonBody), with the braces/brackets
 	// continuing the bracket-color sequence one level inside the parens.
 	jsonBlock(node, t) {
 		emitBracketed(node, t, () => {

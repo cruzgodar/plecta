@@ -271,6 +271,68 @@ test("json block: @-call inside a string value does not derail the scan", () => 
 	);
 });
 
+test("json5 block: bare identifier keys highlight as properties", () => {
+	const src = `@show({name: "spruce", count: 42})`;
+	const tokens = collectTokens(src);
+	const typeAt = text => {
+		const idx = src.indexOf(text);
+		return tokens.find(t => t.start === idx && t.end === idx + text.length)?.type;
+	};
+	assert.equal(typeAt("name"), "property", "bare key is a property");
+	assert.equal(typeAt("count"), "property", "second bare key is a property");
+	assert.equal(typeAt("42"), "number", "the value is still a number");
+});
+
+test("json5 block: single-quoted strings highlight as keys and values", () => {
+	const src = `@show({'k': 'v'})`;
+	const tokens = collectTokens(src);
+	const typeAt = text => {
+		const idx = src.indexOf(text);
+		return tokens.find(t => t.start === idx && t.end === idx + text.length)?.type;
+	};
+	assert.equal(typeAt("'k'"), "property", "single-quoted key is a property");
+	assert.equal(typeAt("'v'"), "jsonString", "single-quoted value is a jsonString");
+});
+
+test("json5 block: extended number forms (hex, leading point, signs, Infinity/NaN)", () => {
+	const src = `@show({a: 0xFF, b: .5, c: +3, d: -Infinity, e: NaN})`;
+	const tokens = collectTokens(src);
+	const typeAt = text => {
+		const idx = src.indexOf(text);
+		return tokens.find(t => t.start === idx && t.end === idx + text.length)?.type;
+	};
+	assert.equal(typeAt("0xFF"), "number", "hex literal");
+	assert.equal(typeAt(".5"), "number", "leading-point literal");
+	assert.equal(typeAt("+3"), "number", "explicit positive sign");
+	assert.equal(typeAt("-Infinity"), "number", "signed Infinity");
+	assert.equal(typeAt("NaN"), "number", "bare NaN");
+});
+
+test("json5 block: line and block comments highlight as comments", () => {
+	const src = `@show({\n\t// a comment\n\tzz: /* inline */ 1,\n})`;
+	const tokens = collectTokens(src);
+	const slice = text => {
+		const idx = src.indexOf(text);
+		return tokens.find(t => t.start === idx && t.end === idx + text.length)?.type;
+	};
+	assert.equal(slice("// a comment"), "comment", "line comment");
+	assert.equal(slice("/* inline */"), "comment", "block comment");
+	// The scan recovers after the comment: the key and value still tokenize.
+	assert.equal(slice("zz"), "property", "key after the comment is still a property");
+	assert.equal(slice("1"), "number", "value after the inline comment is still a number");
+});
+
+test("json5 block: comment containing an @-call does not overlap the function token", () => {
+	const src = `@f({/* @g[x] */ a: 1})`;
+	const tokens = collectTokens(src);
+	const fns = tokens.filter(t => t.type === "spruceFunction");
+	assert.ok(fns.find(t => src.slice(t.start, t.end) === "g"), "nested @g keeps function coloring");
+	const comments = tokens.filter(t => t.type === "comment");
+	for (const c of comments) for (const f of fns) {
+		assert.ok(!(c.start < f.end && f.start < c.end), "no comment token overlaps a function token");
+	}
+});
+
 test("html in a parsed block still highlights when the closing ]] is indented", () => {
 	// The re-matched body ends with the indentation before ]]; that whitespace-only
 	// tail used to fail the document re-match, dropping every token in the block.

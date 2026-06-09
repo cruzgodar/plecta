@@ -54,7 +54,8 @@
       { "id": "property", "description": "JSON property key inside a ( ) block" },
       { "id": "jsonString", "description": "JSON string value inside a ( ) block" },
       { "id": "number", "description": "JSON number inside a ( ) block" },
-      { "id": "boolean", "description": "JSON true/false/null inside a ( ) block" }
+      { "id": "boolean", "description": "JSON true/false/null inside a ( ) block" },
+      { "id": "comment", "description": "JSON5 comment inside a ( ) block" }
     ],
     "semanticTokenModifiers": [
       { "id": "bold", "description": "Bold emphasis, composes with any token type" },
@@ -75,7 +76,8 @@
           "property": ["support.type.property-name.json"],
           "jsonString": ["string.quoted.double.json"],
           "number": ["constant.numeric.json"],
-          "boolean": ["constant.language.json"]
+          "boolean": ["constant.language.json"],
+          "comment": ["comment.line.double-slash.json"]
         }
       }
     ],
