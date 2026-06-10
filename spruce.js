@@ -1158,16 +1158,20 @@ process.on("SIGINT", () => process.exit(130))
 // access. Chaining keeps the public API a plain async function.
 let compileQueue = Promise.resolve();
 
-export function compile(input, outputFormat, filePath = null, raw = false, preserveWs = false)
+// Compile `content` to `outputFormat`, returning the rendered string. `options`
+// is an object: { raw, preserveWhitespace, filePath }. `filePath` (default null)
+// is the document's absolute path, exposed to the document as the `filePath`
+// global and used to resolve declaration-block imports relative to its directory.
+export function compile(content, outputFormat, options = {})
 {
-	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, raw, preserveWs));
+	const next = compileQueue.then(() => _compileImpl(content, outputFormat, options));
 	compileQueue = next.catch(() => {});
 	return next;
 }
 
-async function _compileImpl(input, outputFormat, filePath, raw, preserveWs)
+async function _compileImpl(input, outputFormat, { raw = false, preserveWhitespace: preserveWs = false, filePath = null } = {})
 {
-	// Trimming of parsed-block bodies is the default; -w/--preserve-whitespace
+	// Trimming of parsed-block bodies is the default; preserveWhitespace
 	// keeps them raw. Set before any desugaring so the block handlers see it.
 	preserveWhitespace = preserveWs;
 
@@ -1299,7 +1303,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		// Pass the absolute input path so post-compile hooks (e.g. `document`) get a
 		// stable, fully-qualified path rather than whatever relative form the CLI
 		// was invoked with.
-		const result = await compile(input, outputFormat, resolvePath(inputPath), rawMode, preserveWs);
+		const result = await compile(input, outputFormat, {
+			raw: rawMode,
+			preserveWhitespace: preserveWs,
+			filePath: resolvePath(inputPath),
+		});
 		await writeFile(outputPath, result);
 	}
 	catch (ex)

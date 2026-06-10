@@ -285,12 +285,12 @@ test("call: -w/preserve-whitespace keeps the raw body", async () =>
 {
 	// With the flag set, the inline body keeps its surrounding spaces.
 	assert.equal(
-		await compile(lib + "@id[  hello  ]", "html", null, false, true),
+		await compile(lib + "@id[  hello  ]", "html", { preserveWhitespace: true }),
 		NL + "  hello  ",
 	);
 	// And a [[ ]] body keeps its leading/trailing whitespace too.
 	assert.equal(
-		await compile(lib + "(@id [[<br>\n\t\t]])", "html", null, false, true),
+		await compile(lib + "(@id [[<br>\n\t\t]])", "html", { preserveWhitespace: true }),
 		NL + "<br>\n\t\t",
 	);
 });
@@ -335,7 +335,7 @@ test("call: -w/preserve-whitespace skips functionCallChunk re-indentation", asyn
 	// With trimming disabled, the output is left verbatim: only the first line
 	// carries the literal leading indentation, exactly as written.
 	assert.equal(
-		await compile(lib + "\t@lines", "html", null, false, true),
+		await compile(lib + "\t@lines", "html", { preserveWhitespace: true }),
 		NL + "\ta\nb",
 	);
 });
@@ -703,7 +703,7 @@ test("raw: markup is left literal, only @-calls are interpreted", async () =>
 {
 	// In raw mode the whole document behaves like the body of @{}: headings and
 	// emphasis stay literal, but @bold still runs.
-	const out = await compile("# not a heading\n**not bold** @bold[but this is]", "html", null, true);
+	const out = await compile("# not a heading\n**not bold** @bold[but this is]", "html", { raw: true });
 	assert.equal(out, "# not a heading\n**not bold** <strong>but this is</strong>");
 });
 
@@ -711,14 +711,14 @@ test("raw: same source differs from normal mode", async () =>
 {
 	const src = "# H\n";
 	assert.equal(await compile(src, "html"), "<h1>H</h1>\n");
-	assert.equal(await compile(src, "html", null, true), "# H\n");
+	assert.equal(await compile(src, "html", { raw: true }), "# H\n");
 });
 
 test("raw: parsed-block arguments to @-calls are still parsed", async () =>
 {
 	// The [ ] argument of a raw-mode @-call is a parsed inline block, so emphasis
 	// inside it is interpreted even though the surrounding document is raw.
-	const out = await compile("@bold[**inner**]", "html", null, true);
+	const out = await compile("@bold[**inner**]", "html", { raw: true });
 	assert.equal(out, "<strong><strong>inner</strong></strong>");
 });
 
@@ -727,7 +727,7 @@ test("raw: declaration blocks are still interpreted", async () =>
 	// The @@@ block defines `shout` (and is stripped from output); markup stays
 	// literal, but the @shout call runs.
 	const src = `@@@html\nfunction shout(x) { return x.toUpperCase(); }\n@@@\n# literal @shout[hi]`;
-	const out = await compile(src, "html", null, true);
+	const out = await compile(src, "html", { raw: true });
 	assert.equal(out, "\n# literal HI");
 });
 
