@@ -20,6 +20,7 @@ const lib = `@@@html
 function id(x) { return x; }
 function up(x) { return x.toUpperCase(); }
 function join(...args) { return args.join(","); }
+function lines() { return "a\\nb"; }
 function noop() {}
 @@@
 `;
@@ -255,11 +256,11 @@ test("call: parsed-block body tolerates an indented closing ]]", async () =>
 	// the closing ]]. An html tag (a chunk that stops at the newline) leaves that
 	// whitespace-only tail (no trailing newline) unconsumed, which used to make the
 	// document re-match fail outright, dropping the whole block. A trailing
-	// spaceOrTab* on `document` mops it up. The trailing whitespace is then trimmed
-	// off by default (see the preserve-whitespace tests for the untrimmed form).
+	// spaceOrTab* on `document` mops it up. Dedent strips no common indentation here
+	// (the <br> line sits at column 0) and keeps the trailing blank line as-is.
 	assert.equal(
 		await compile(lib + "(@id [[<br>\n\t\t]])", "html"),
-		NL + "<br>",
+		NL + "<br>\n\t\t",
 	);
 });
 
@@ -270,12 +271,13 @@ test("call: inline parsed-block body is trimmed by default", async () =>
 	assert.equal(await compile(lib + "@id[  hello  ]", "html"), NL + "hello");
 });
 
-test("call: parsed-block [[ ]] body is trimmed by default", async () =>
+test("call: parsed-block [[ ]] body is dedented by default", async () =>
 {
-	// Surrounding newlines/indentation between [[ and the content are stripped.
+	// The common indentation (one tab) is stripped from the content, but the blank
+	// lines around it are kept — so the surrounding newlines survive into the body.
 	assert.equal(
 		await compile(lib + "(@id [[\n\thello\n]])", "html"),
-		NL + "<p>hello</p>",
+		NL + "\n<p>hello\n</p>",
 	);
 });
 
@@ -296,6 +298,46 @@ test("call: -w/preserve-whitespace keeps the raw body", async () =>
 test("call: trimming only strips the outer edges, not interior whitespace", async () =>
 {
 	assert.equal(await compile(lib + "@id[ a  b ]", "html"), NL + "a  b");
+});
+
+test("call: [[ ]] body dedents the common indentation, keeping relative indents", async () =>
+{
+	// The block is indented for source-readability; the least-indented contentful
+	// line (4 spaces) sets the common indent stripped from every line, so the code
+	// block's content keeps only its indentation relative to that — line1 stays one
+	// level in, line2 sits at the margin. A bare .trim() would instead have eaten
+	// line1's leading spaces too. The blank lines around the block are kept, so the
+	// body opens and closes with a newline. (A code block is used because its raw
+	// content preserves the interior whitespace the dedent produced.)
+	const src =
+		"@id[[\n" +
+		"        ```\n" +
+		"        line1\n" +
+		"    line2\n" +
+		"        ```\n" +
+		"]]";
+	assert.equal(
+		await compile(lib + src, "html"),
+		NL + "\n<pre><code>    line1\nline2</code></pre>\n",
+	);
+});
+
+test("call: functionCallChunk re-indents every output line by its own indentation", async () =>
+{
+	// A call alone on an indented line adds that leading indentation to *every*
+	// line of its rendered output, not just the first — so multi-line results stay
+	// block-aligned under the call.
+	assert.equal(await compile(lib + "\t@lines", "html"), NL + "\ta\n\tb");
+});
+
+test("call: -w/preserve-whitespace skips functionCallChunk re-indentation", async () =>
+{
+	// With trimming disabled, the output is left verbatim: only the first line
+	// carries the literal leading indentation, exactly as written.
+	assert.equal(
+		await compile(lib + "\t@lines", "html", null, false, true),
+		NL + "\ta\nb",
+	);
 });
 
 test("call: sibling parsed-block args keep their own content (no id collision)", async () =>

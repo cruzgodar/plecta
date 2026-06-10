@@ -301,10 +301,11 @@ let declarationBlockOriginalLines = [];
 // so runtime errors point at the real source line.
 let desugarLineBase = 1;
 
-// When false (the default), the body of a parsed block ([ ] or [[ ]]) is trimmed
-// of leading/trailing whitespace before it's handed to the function, so the call
-// receives just the middle. The CLI's -w/--preserve-whitespace flag sets this
-// true to keep the raw, untrimmed body. Set per compile by _compileImpl.
+// When false (the default), the body of a parsed block is cleaned up before it's
+// handed to the function: inline [ ] bodies are trimmed of leading/trailing
+// whitespace, and [[ ]] bodies are dedented (see dedentBlock). The CLI's
+// -w/--preserve-whitespace flag sets this true to keep the raw body (and also
+// skips functionCallChunk output re-indentation). Set per compile by _compileImpl.
 let preserveWhitespace = false;
 
 function globalizeLineNum(localLineNum)
@@ -320,6 +321,56 @@ function leadingTrimNewlines(str)
 {
 	const leading = str.slice(0, str.length - str.trimStart().length);
 	return (leading.match(/\r\n|\r|\n/g) || []).length;
+}
+
+// Visual width of a line's leading whitespace run, counting a tab as 4 columns.
+// Lines that are entirely whitespace report no indentation so they don't drag
+// the block's common-indent measurement down to zero.
+function indentWidth(line)
+{
+	let width = 0;
+	for (const ch of line)
+	{
+		if (ch === " ") width += 1;
+		else if (ch === "\t") width += 4;
+		else break;
+	}
+	return width;
+}
+
+// The default whitespace treatment for a [[ ]] parsed-block body: find the
+// least-indented contentful line (tab = 4 columns) and remove that much
+// indentation from every line, so a block indented for source-readability doesn't
+// leak that indentation into the content it carries. Leading/trailing blank lines
+// are left intact. Step 3 — re-indenting the call's *output* by the call line's
+// own indentation — lives in insertCodeOutput's functionCallChunk handler, since
+// it acts on the rendered result rather than the source body.
+function dedentBlock(str)
+{
+	const lines = str.split(/\r\n|\r|\n/);
+
+	const contentful = lines.filter(line => line.trim() !== "");
+	if (contentful.length === 0) return str;
+
+	const minIndent = Math.min(...contentful.map(indentWidth));
+
+	return lines.map(line =>
+	{
+		// Walk off `minIndent` columns of leading whitespace. If a tab straddles the
+		// cut point, re-pad the columns past it with spaces so we never remove more
+		// indentation than measured.
+		let col = 0;
+		let i = 0;
+		while (i < line.length && col < minIndent)
+		{
+			if (line[i] === " ") col += 1;
+			else if (line[i] === "\t") col += 4;
+			else break;
+			i++;
+		}
+		const overshoot = col - minIndent;
+		return " ".repeat(Math.max(0, overshoot)) + line.slice(i);
+	}).join("\n");
 }
 
 function captureFunctionCall(node)
@@ -508,11 +559,12 @@ const desugarOperation = {
 
 	parsedBlock(start, body, end)
 	{
-		// By default the body is trimmed so the function receives just the middle;
-		// -w/--preserve-whitespace keeps it raw. The trimming happens here, on the
-		// string re-matched as a document, so getCode (which walks the desugared
-		// output) sees the already-trimmed content without extra bookkeeping.
-		const bodyStr = preserveWhitespace ? body.sourceString : body.sourceString.trim();
+		// By default the body is dedented (common indentation stripped) so the
+		// function receives just the middle; -w/--preserve-whitespace keeps it raw.
+		// This happens here, on the string re-matched as a document, so getCode
+		// (which walks the desugared output) sees the already-dedented content
+		// without extra bookkeeping.
+		const bodyStr = preserveWhitespace ? body.sourceString : dedentBlock(body.sourceString);
 		const inner = spruce.match(bodyStr, "document");
 
 		if (inner.failed())
@@ -523,11 +575,10 @@ const desugarOperation = {
 		// Shift the line base so nested captures globalize correctly: the re-match's
 		// line 1 corresponds to the original-source line where this body begins.
 		// Mirrors getCode's getCodeOffset bookkeeping, but line-based. Restore after.
-		// Trimming drops leading whitespace, so advance past any newlines it removed
-		// to keep the base on the line the trimmed content really starts on.
+		// Dedent only strips per-line indentation and keeps every line, so no leading
+		// lines are dropped and the body's first line still maps to the re-match's.
 		const savedBase = desugarLineBase;
-		const skippedLines = preserveWhitespace ? 0 : leadingTrimNewlines(body.sourceString);
-		desugarLineBase = globalizeLineNum(body.source.getLineAndColumn().lineNum + skippedLines);
+		desugarLineBase = globalizeLineNum(body.source.getLineAndColumn().lineNum);
 		const innerDesugared = semantics(inner).desugar();
 		desugarLineBase = savedBase;
 
@@ -820,6 +871,26 @@ const insertCodeOutputOperation = {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
 		return "";
+	},
+
+	// A function call alone on its line. By default, add the call line's own
+	// leading indentation to *every* line of the rendered output, not just the
+	// first (which already carries it as the literal prefix) — so a multi-line
+	// result stays block-aligned under the call. -w/--preserve-whitespace leaves
+	// the output verbatim, matching the disabled body dedent.
+	functionCallChunk(leadingWhitespace, call, trailingWhitespace, terminator)
+	{
+		const __spruceOutput = this.args.__spruceOutput;
+		const indent = leadingWhitespace.sourceString;
+		const callOutput = call.insertCodeOutput(__spruceOutput);
+
+		const reindented = preserveWhitespace
+			? indent + callOutput
+			: indent + callOutput.replace(/\r\n|\r|\n/g, match => match + indent);
+
+		return reindented
+			+ trailingWhitespace.insertCodeOutput(__spruceOutput)
+			+ terminator.insertCodeOutput(__spruceOutput);
 	},
 
 	functionCall_wrapped(_1, _2, _3, _4, name, spacePaddedBlocks, _5, _6)
