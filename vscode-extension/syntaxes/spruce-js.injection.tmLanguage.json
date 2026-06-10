@@ -4,10 +4,20 @@
 	"injectionSelector": "L:meta.embedded.block.javascript.spruce -comment -string",
 	"patterns": [
 		{ "include": "#filePath" },
+		{ "include": "#reservedImportAlias" },
 		{ "include": "#reservedDefinitions" },
 		{ "include": "#reservedNames" }
 	],
 	"repository": {
+		"reservedImportAlias": {
+			"comment": "An `as`-aliased import/export binding (`import { name as document }`, `import { document as alias }`). The host JS grammar matches `name as alias` as one span, so the #reservedNames rule below can't reach an aliased stdlib name on its own; we re-tokenize each side through #reservedNames so a stdlib name in either the imported or the local position still gets the storage.type.js highlight. Non-stdlib names fall through to their default scope. Listed before #reservedNames so it wins the whole `name as alias` span.",
+			"match": "(?<![.$[:alnum:]_])([_$[:alpha:]][_$[:alnum:]]*)\\s+(as)\\s+([_$[:alpha:]][_$[:alnum:]]*)\\b",
+			"captures": {
+				"1": { "patterns": [{ "include": "#reservedNames" }] },
+				"2": { "name": "keyword.control.as.js" },
+				"3": { "patterns": [{ "include": "#reservedNames" }] }
+			}
+		},
 		"filePath": {
 			"comment": "filePath is a read-only global constant spruce injects with the input's absolute path, highlighted as a language variable rather than a stdlib function.",
 			"match": "(?<![.$[:alnum:]_])filePath\\b",

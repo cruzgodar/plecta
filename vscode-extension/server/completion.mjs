@@ -209,8 +209,11 @@ export function unusedImportRanges(text) {
 	const markdown = mdChars.join("");
 
 	// In markdown, require a leading `@` (and reject `@@name`, an escaped @) so only
-	// genuine calls count; in declaration JS, a bare word reference counts.
+	// genuine calls count; in declaration JS, a bare word reference counts. A
+	// built-in (stdlib) name is never treated as unused, even if the document
+	// never references it.
 	const isUsed = name =>
+		RESERVED_NAMES.has(name) ||
 		new RegExp(`\\b${escapeRe(name)}\\b`).test(declJs) ||
 		new RegExp(`(?<!@)@[ \\t]*${escapeRe(name)}\\b`).test(markdown);
 
