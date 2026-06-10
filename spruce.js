@@ -8,7 +8,7 @@ import * as ohm from "ohm-js";
 import { extname, join, resolve as resolvePath } from "path";
 import process from "process";
 import { pathToFileURL } from "url";
-import { makeInclude, stdlib } from "./stdlib.js";
+import { stdlib } from "./stdlib.js";
 
 const pendingCleanup = new Set();
 
@@ -24,43 +24,6 @@ function ensureImportHooks()
 		register("./importHooks.js", import.meta.url);
 		importHooksRegistered = true;
 	}
-}
-
-// Turns a user-facing include() specifier into a URL to dynamically import.
-// It can't lean on default ESM resolution, because that would resolve relative
-// to stdlib.js (where include lives) rather than to the document. So it mirrors
-// importHooks.js by hand: relative specifiers resolve against the fragment's
-// base dir, absolute "/x" against --root, and bare specifiers fall through to
-// node's package resolution. When a root is in play the URL is tagged with
-// `?spruceRoot` (and the hooks armed) so the included file's own absolute
-// imports keep rerouting against the same root, exactly as a static import in a
-// declaration block would.
-function makeIncludeResolver(baseDir, root)
-{
-	return (specifier) =>
-	{
-		let url;
-		if (specifier.startsWith("/"))
-		{
-			url = pathToFileURL(join(root ?? "/", specifier));
-		}
-		else if (specifier.startsWith("."))
-		{
-			url = pathToFileURL(resolvePath(baseDir, specifier));
-		}
-		else
-		{
-			return specifier;
-		}
-
-		if (root)
-		{
-			url.searchParams.set("spruceRoot", root);
-			ensureImportHooks();
-		}
-
-		return url.href;
-	};
 }
 
 const bt = "`";
@@ -1122,12 +1085,6 @@ async function _compileImpl(input, outputFormat, filePath, root, raw)
 			setGlobal(key, value);
 		}
 	}
-
-	// `include` is format-independent and shares the snapshot above, so any names
-	// it splats onto globalThis are restored alongside the stdlib when we return.
-	// The resolver mirrors importHooks.js: relative specifiers resolve against the
-	// fragment's base dir (cwd, matching runCode), absolute "/x" against --root.
-	setGlobal("include", makeInclude(makeIncludeResolver(process.cwd(), root), setGlobal));
 
 	// Expose the input's absolute path as a global constant so the document body
 	// (and any files it imports, which share this globalThis) can read it by bare

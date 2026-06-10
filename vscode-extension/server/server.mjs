@@ -1,22 +1,24 @@
 import {
 	CompletionItemKind,
 	createConnection,
+	DiagnosticSeverity,
+	DiagnosticTag,
 	ProposedFeatures,
 	TextDocuments,
 	TextDocumentSyncKind,
 } from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "url";
-import { tokenize, TOKEN_TYPES, TOKEN_MODIFIERS } from "./tokenizer.mjs";
-import { buildImportEdits, collectCompletions } from "./completion.mjs";
+import { collectTokens, tokenize, TOKEN_TYPES, TOKEN_MODIFIERS } from "./tokenizer.mjs";
+import { buildImportEdits, collectCompletions, inScopeNames, unusedImportRanges } from "./completion.mjs";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
-// Workspace roots, captured at initialize. include() resolves relative
-// specifiers against the cwd spruce is run from (usually a workspace root) and
-// absolute "/x" specifiers against --root, so these are the bases we try when
-// statically resolving an included module for completion.
+// Workspace roots, captured at initialize. A declaration block's imports resolve
+// relative specifiers against the cwd spruce is run from (usually a workspace
+// root) and absolute "/x" specifiers against --root, so these are the bases we
+// try when statically resolving an imported module for completion.
 let workspaceRoots = [];
 
 connection.onInitialize((params) => {
@@ -106,16 +108,56 @@ connection.languages.semanticTokens.on((params) => {
 	const doc = documents.get(params.textDocument.uri);
 	if (!doc) return { data: [] };
 	try {
-		return { data: tokenize(doc.getText()) };
+		const text = doc.getText();
+		return { data: tokenize(text, inScopeNames(text)) };
 	} catch (err) {
 		connection.console.error(`tokenize failed: ${err && err.stack || err}`);
 		return { data: [] };
 	}
 });
 
-documents.onDidChangeContent(() => {
-	// Tell VSCode to refresh semantic tokens.
+// Compute and publish diagnostics for a document: undefined @function calls as
+// errors (so they surface in the Problems panel and the editor minimap, like a
+// real compile error) and unused imports tagged Unnecessary (so VSCode dims
+// them). Undefined calls are read off the semantic-token pass — the tokens it
+// emits already carry correct absolute offsets, even inside re-matched parsed
+// blocks — by filtering for the `undefinedFunction` type.
+function publishDiagnostics(doc) {
+	const text = doc.getText();
+	const diagnostics = [];
+
+	const known = inScopeNames(text);
+	for (const tok of collectTokens(text, known)) {
+		if (tok.type !== "undefinedFunction") continue;
+		diagnostics.push({
+			severity: DiagnosticSeverity.Error,
+			range: { start: doc.positionAt(tok.start), end: doc.positionAt(tok.end) },
+			message: `'${text.slice(tok.start, tok.end)}' is not defined.`,
+			source: "spruce",
+		});
+	}
+
+	for (const range of unusedImportRanges(text)) {
+		diagnostics.push({
+			severity: DiagnosticSeverity.Hint,
+			tags: [DiagnosticTag.Unnecessary],
+			range: { start: doc.positionAt(range.start), end: doc.positionAt(range.end) },
+			message: "Unused import.",
+			source: "spruce",
+		});
+	}
+
+	connection.sendDiagnostics({ uri: doc.uri, diagnostics });
+}
+
+documents.onDidChangeContent((change) => {
+	// Tell VSCode to refresh semantic tokens, and recompute diagnostics.
 	connection.languages.semanticTokens.refresh();
+	try {
+		publishDiagnostics(change.document);
+	} catch (err) {
+		connection.console.error(`diagnostics failed: ${err && err.stack || err}`);
+	}
 });
 
 documents.listen(connection);

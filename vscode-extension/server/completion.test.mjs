@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildImportEdits, collectCompletions } from "./completion.mjs";
+import { buildImportEdits, collectCompletions, inScopeNames, unusedImportRanges } from "./completion.mjs";
 
 const labels = items => items.map(i => i.label);
 const find = (items, label) => items.find(i => i.label === label);
@@ -12,7 +12,7 @@ test("declaration block offers reserved globals", () => {
 	const doc = "@@@\nlet x = 1;\n@@@\n";
 	const items = collectCompletions(doc, doc.indexOf("let x"), {});
 	const names = labels(items);
-	for (const reserved of ["document", "bold", "heading", "include", "filePath", "JSON5"]) {
+	for (const reserved of ["document", "bold", "heading", "filePath", "JSON5"]) {
 		assert.ok(names.includes(reserved), `expected reserved global ${reserved}`);
 	}
 });
@@ -64,7 +64,7 @@ test("plain prose offers no completions", () => {
 	assert.equal(collectCompletions("just some text", 5, {}).length, 0);
 });
 
-test("include() pulls in a module's exports", () => {
+test("a named import resolves its bindings' kinds from the module's exports", () => {
 	const dir = mkdtempSync(join(tmpdir(), "spruce-completion-"));
 	try {
 		writeFileSync(join(dir, "helpers.js"), [
@@ -76,28 +76,27 @@ test("include() pulls in a module's exports", () => {
 			"export default function () {}",
 		].join("\n"));
 		const docPath = join(dir, "doc.sp");
-		const doc = '@@@\ninclude("./helpers.js")\n@@@\n\n@a';
+		const doc = '@@@\nimport { alpha, beta, GAMMA, delta } from "./helpers.js"\n@@@\n\n@a';
 		const items = collectCompletions(doc, doc.length, { filePath: docPath });
 
 		assert.equal(find(items, "alpha")?.kind, "function");
 		assert.equal(find(items, "beta")?.kind, "function", "arrow const export is a function");
 		assert.equal(find(items, "GAMMA")?.kind, "variable");
-		assert.ok(find(items, "delta"), "re-exported name is included");
-		assert.ok(!find(items, "default"), "default export is not a bare name");
-		assert.match(find(items, "alpha")?.detail ?? "", /included from \.\/helpers\.js/);
+		assert.ok(find(items, "delta"), "re-exported binding is offered");
+		assert.match(find(items, "alpha")?.detail ?? "", /imported from \.\/helpers\.js/);
 	} finally {
 		rmSync(dir, { recursive: true });
 	}
 });
 
-test("a relative include resolves against a workspace root, not just the doc dir", () => {
+test("a relative import resolves against a workspace root, not just the doc dir", () => {
 	// The helper sits at the project root; the document is in a subfolder and
-	// includes it the way the spruce CLI (run from the root) would resolve it.
+	// imports it the way the spruce CLI (run from the root) would resolve it.
 	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
 	try {
 		writeFileSync(join(root, "helpers.js"), "export function fromRoot() {}");
 		const docPath = join(root, "posts", "doc.sp");
-		const doc = '@@@\ninclude("./helpers.js")\n@@@\n\n@f';
+		const doc = '@@@\nimport { fromRoot } from "./helpers.js"\n@@@\n\n@f';
 		const items = collectCompletions(doc, doc.length, { filePath: docPath, roots: [root] });
 		assert.equal(find(items, "fromRoot")?.kind, "function");
 	} finally {
@@ -105,11 +104,11 @@ test("a relative include resolves against a workspace root, not just the doc dir
 	}
 });
 
-test("an absolute include specifier resolves against the workspace root", () => {
+test("an absolute import specifier resolves against the workspace root", () => {
 	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
 	try {
 		writeFileSync(join(root, "lib.js"), "export function abs() {}");
-		const doc = '@@@\ninclude("/lib.js")\n@@@\n\n@a';
+		const doc = '@@@\nimport { abs } from "/lib.js"\n@@@\n\n@a';
 		const items = collectCompletions(doc, doc.length, { filePath: join(root, "doc.sp"), roots: [root] });
 		assert.equal(find(items, "abs")?.kind, "function");
 	} finally {
@@ -117,8 +116,34 @@ test("an absolute include specifier resolves against the workspace root", () => 
 	}
 });
 
-test("an unresolvable include is ignored without throwing", () => {
-	const doc = '@@@\ninclude("/lib/x.js")\n@@@\n\n@a';
+test("an unresolvable import is ignored without throwing", () => {
+	const doc = '@@@\nimport { x } from "/lib/x.js"\n@@@\n\n@a';
 	const items = collectCompletions(doc, doc.length, { filePath: "/some/doc.sp", roots: [] });
 	assert.ok(Array.isArray(items));
+});
+
+test("inScopeNames includes reserved names, document definitions, and imports", () => {
+	const doc = '@@@\nimport { foo } from "./x.js";\nfunction bar() {}\n@@@\n';
+	const names = inScopeNames(doc);
+	assert.ok(names.has("heading"), "reserved stdlib name");
+	assert.ok(names.has("foo"), "imported binding");
+	assert.ok(names.has("bar"), "defined function");
+	assert.ok(!names.has("nope"));
+});
+
+test("unusedImportRanges flags an import whose binding is never used", () => {
+	const doc = '@@@\nimport { unused } from "./x.js";\n@@@\n\n# hi';
+	const ranges = unusedImportRanges(doc);
+	assert.equal(ranges.length, 1);
+	assert.equal(doc.slice(ranges[0].start, ranges[0].end), 'import { unused } from "./x.js"');
+});
+
+test("unusedImportRanges leaves an @-call-used import alone", () => {
+	const doc = '@@@\nimport { used } from "./x.js";\n@@@\n\n@used[hi]';
+	assert.deepEqual(unusedImportRanges(doc), []);
+});
+
+test("unusedImportRanges leaves an import used only in declaration JS alone", () => {
+	const doc = '@@@\nimport { helper } from "./x.js";\nfunction wrap(x) { return helper(x); }\n@@@\n';
+	assert.deepEqual(unusedImportRanges(doc), []);
 });

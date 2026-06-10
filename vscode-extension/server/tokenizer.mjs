@@ -13,6 +13,7 @@ export const TOKEN_TYPES = [
 	"codeBlock",
 	"list",
 	"spruceFunction",
+	"undefinedFunction",
 	"escape",
 	"invalid",
 	"string",
@@ -423,15 +424,26 @@ const handlers = {
 				const s = node.source.startIdx + atOffset;
 				emit(t, s, s + 1, "spruceFunction");
 			}
+			// A function call resets the bracket-color sequence: its first argument
+			// block (the next delimiter after the call) is always yellow.
+			bracketColorCounter = 0;
 			for (const c of node.children) c.collect(t);
 		}, "spruceFunction");
 		return true;
 	},
 	functionCall_bare(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
+		// Reset so the first argument block after the call is yellow (see wrapped).
+		bracketColorCounter = 0;
+		for (const c of node.children) c.collect(t);
+		return true;
 	},
 	functionCall_raw(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
+		// Reset so the first argument block after the call is yellow (see wrapped).
+		bracketColorCounter = 0;
+		for (const c of node.children) c.collect(t);
+		return true;
 	},
 	// Escape sequences (@] @} @@ etc.): both the escaping @ and the escaped
 	// character take the light-orange escape color, so the whole 2-char sequence
@@ -450,8 +462,16 @@ const handlers = {
 		return true;
 	},
 
+	// A function-call name. When the document's in-scope names are known (the
+	// server passes them; tests calling collectTokens(text) alone don't), a name
+	// that resolves to nothing — not a stdlib reserved, not defined or imported in
+	// the document — is flagged `undefinedFunction` (red, like an invalid @, and
+	// surfaced as an error diagnostic by the server) instead of spruceFunction.
 	jsIdentifier(node, t) {
-		emit(t, node.source.startIdx, node.source.endIdx, "spruceFunction");
+		const type = currentKnownNames && !currentKnownNames.has(node.sourceString)
+			? "undefinedFunction"
+			: "spruceFunction";
+		emit(t, node.source.startIdx, node.source.endIdx, type);
 		return true;
 	},
 
@@ -612,15 +632,24 @@ function semanticsFor(grammar) {
 // module scope so the parsedBlock handler can re-match block bodies against it.
 let activeGrammar = null;
 
-export function collectTokens(text) {
+// The set of names that resolve in the current document (stdlib reserved names
+// plus whatever it defines or imports), or null to skip undefined-function
+// detection. Module scope so the jsIdentifier handler — reached deep in the
+// tree, including inside re-matched parsed blocks — can consult it. Reset per
+// document in collectTokens.
+let currentKnownNames = null;
+
+export function collectTokens(text, knownNames = null) {
 	const grammar = grammarFor(text);
 	activeGrammar = grammar;
 	const match = grammar.match(text);
 	if (match.failed()) return [];
 	bracketColorCounter = 0;
 	activeModifiers = 0;
+	currentKnownNames = knownNames;
 	const tokens = [];
 	semanticsFor(grammar)(match).collect(tokens);
+	currentKnownNames = null;
 	return tokens;
 }
 
@@ -700,6 +729,6 @@ function lineEndOffset(text, lineStarts, line) {
 	return end;
 }
 
-export function tokenize(text) {
-	return encodeTokens(text, collectTokens(text));
+export function tokenize(text, knownNames = null) {
+	return encodeTokens(text, collectTokens(text, knownNames));
 }

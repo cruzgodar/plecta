@@ -3,7 +3,6 @@
 	"scopeName": "spruce.embedded.js.injection",
 	"injectionSelector": "L:meta.embedded.block.javascript.spruce -comment -string",
 	"patterns": [
-		{ "include": "#include" },
 		{ "include": "#filePath" },
 		{ "include": "#reservedDefinitions" },
 		{ "include": "#reservedNames" }
@@ -20,11 +19,6 @@
 				"1": { "name": "storage.type.function.js" },
 				"2": { "name": "storage.type.js" }
 			}
-		},
-		"include": {
-			"comment": "include() is spruce's `\\input`-style directive, highlighted as a keyword rather than a stdlib function.",
-			"match": "(?<![.$[:alnum:]_])include\\b(?=\\s*\\()",
-			"name": "keyword.control.include.spruce"
 		},
 		"reservedNames": {
 			"comment": "The stdlib functions spruce makes available by bare name inside declaration blocks. Highlighted with storage.type.js, the same scope TextMate gives the `constructor` keyword in a class, so they read as language-reserved both where they're defined (function bold) and where they're called. Injected across the whole embedded JS block (L: priority) so it also wins inside function bodies and over the function-declaration name capture. Keep in sync with the keys in stdlib.js (the `$` and `_` entries are intentionally omitted, since highlighting every `$`/`_` would be far too noisy). Longer names precede their prefixes so e.g. `codeBlock` wins over `code`.",

@@ -397,27 +397,32 @@ test("nested brackets @g[@f[x]] pair correctly with sequential colors", () => {
 	const innerOpen = brackets.find(t => t.start === 5);
 	const innerClose = brackets.find(t => t.start === 7);
 	const outerClose = brackets.find(t => t.start === 8);
+	// The `]]` splits into two separate closers (idx 7 and 8), each its own token.
 	assert.ok(outerOpen && innerOpen && innerClose && outerClose, "all four delimiters colored");
 	assert.equal(outerOpen.type, outerClose.type);
 	assert.equal(innerOpen.type, innerClose.type);
-	assert.notEqual(outerOpen.type, innerOpen.type);
+	// Both calls reset the color, so all four delimiters are yellow (bracket1).
+	assert.equal(outerOpen.type, "bracket1");
+	assert.equal(innerOpen.type, "bracket1");
 });
 
-test("adjacent same-depth blocks advance the color (not nesting-based)", () => {
+test("a function call resets the color, so each call's first block is yellow", () => {
+	// Each @-call resets the bracket-color sequence, so every call's argument
+	// block starts at color1 (yellow) regardless of the preceding calls.
 	const src = "@a[x] @b[y] @c[z]";
 	const opens = collectTokens(src)
 		.filter(t => t.type.startsWith("bracket") && src[t.start] === "[")
 		.sort((a, b) => a.start - b.start);
 	assert.equal(opens.length, 3);
-	// Same-depth siblings each advance, cycling through the available colors.
 	assert.equal(opens[0].type, "bracket1");
-	assert.equal(opens[1].type, "bracket2");
+	assert.equal(opens[1].type, "bracket1");
 	assert.equal(opens[2].type, "bracket1");
 });
 
-test("nesting and adjacency both advance, but nesting doesn't bleed into siblings", () => {
-	// @f[@g[x]][y] -> f's first `[` = color1, nested @g's `[` = color2,
-	// and f's second `[y]` is also color2 (adjacent to the first block).
+test("adjacent blocks of one call advance, but a nested call resets to yellow", () => {
+	// @f[@g[x]][y] -> f's first `[` = color1; the nested @g resets, so @g's `[`
+	// is also color1; and f's second `[y]` advances to color2 (adjacent to the
+	// first block, no call between them).
 	const src = "@f[@g[x]][y]";
 	const brackets = collectTokens(src)
 		.filter(t => t.type.startsWith("bracket"))
@@ -425,10 +430,10 @@ test("nesting and adjacency both advance, but nesting doesn't bleed into sibling
 	// Delimiters in order: [ (f1, idx2), [ (g, idx5), ] (g, idx7), ] (f1, idx8), [ (f2, idx9), ] (f2, idx11)
 	const byStart = i => brackets.find(t => t.start === i);
 	assert.equal(byStart(2).type, "bracket1"); // f's first [
-	assert.equal(byStart(5).type, "bracket2"); // @g's [
-	assert.equal(byStart(7).type, "bracket2"); // @g's ]
+	assert.equal(byStart(5).type, "bracket1"); // @g's [ (reset by the call)
+	assert.equal(byStart(7).type, "bracket1"); // @g's ]
 	assert.equal(byStart(8).type, "bracket1"); // f's first ]
-	assert.equal(byStart(9).type, "bracket2"); // f's second [
+	assert.equal(byStart(9).type, "bracket2"); // f's second [ (adjacency advances)
 	assert.equal(byStart(11).type, "bracket2"); // f's second ]
 });
 
@@ -462,4 +467,33 @@ test("tokenize returns delta-encoded data array", () => {
 test("failed parse yields empty token list", () => {
 	const tokens = collectTokens("unterminated `code");
 	assert.deepEqual(tokens, []);
+});
+
+test("with no known-names set, a call name stays spruceFunction", () => {
+	const tokens = collectTokens("@whatever[x]");
+	assert.ok(tokens.find(t => t.type === "spruceFunction"));
+	assert.ok(!tokens.find(t => t.type === "undefinedFunction"));
+});
+
+test("a call name absent from the known-names set is flagged undefinedFunction", () => {
+	const src = "@nope[x]";
+	const tokens = collectTokens(src, new Set(["heading"]));
+	const name = tokens.find(t => t.type === "undefinedFunction");
+	assert.ok(name, "name flagged undefined");
+	assert.equal(src.slice(name.start, name.end), "nope");
+	// The leading @ stays a function marker; only the name turns red.
+	assert.ok(tokens.find(t => t.type === "spruceFunction"));
+});
+
+test("a known call name stays spruceFunction even when detection is on", () => {
+	const tokens = collectTokens("@ok[x]", new Set(["ok"]));
+	assert.ok(tokens.find(t => t.type === "spruceFunction"));
+	assert.ok(!tokens.find(t => t.type === "undefinedFunction"));
+});
+
+test("an undefined call inside a parsed block keeps a correct absolute offset", () => {
+	const src = "[[ @ghost[x] ]]";
+	const tok = collectTokens(src, new Set()).find(t => t.type === "undefinedFunction");
+	assert.ok(tok);
+	assert.equal(src.slice(tok.start, tok.end), "ghost");
 });

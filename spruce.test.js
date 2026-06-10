@@ -669,33 +669,6 @@ test("raw: declaration blocks are still interpreted", async () =>
 
 
 // ============================================================================
-// include()
-// ============================================================================
-
-test("include: makes every export callable by bare name", async () =>
-{
-	const src = `@@@html\nawait include("./testIncludeHelpers.js");\n@@@\n(@shout [hi]) (@wrap [x])`;
-	// Neither shout nor wrap is named anywhere in the document, yet both resolve.
-	assert.equal(await compile(src, "html"), NL + "<p>HI! [x]</p>");
-});
-
-test("include: is available regardless of output format", async () =>
-{
-	const src = `@@@tex\nawait include("./testIncludeHelpers.js");\n@@@\n(@shout [hi])`;
-	assert.equal(await compile(src, "tex"), NL + "HI!");
-});
-
-test("include: imported names do not leak onto globalThis after compile", async () =>
-{
-	const src = `@@@html\nawait include("./testIncludeHelpers.js");\n@@@\n(@shout [hi])`;
-	const had = Object.hasOwn(globalThis, "shout");
-	await compile(src, "html");
-	assert.equal(Object.hasOwn(globalThis, "shout"), had);
-	assert.equal(Object.hasOwn(globalThis, "include"), false);
-});
-
-
-// ============================================================================
 // Post-compile hooks
 // ============================================================================
 

@@ -6,11 +6,11 @@
 // Completion contexts, matching how names resolve at compile time:
 //   * Inside a `@@@ ... @@@` declaration block the body is plain JS, so bare
 //     identifiers fall through to globalThis — we offer the reserved globals
-//     (the format stdlib plus include/filePath/JSON5) alongside anything the
-//     document has already defined, included, or imported.
+//     (the format stdlib plus filePath/JSON5) alongside anything the document
+//     has already defined or imported.
 //   * After an `@` function call we offer the reserved *functions* (the stdlib
-//     renderers) plus the document's defined/included/imported names, since
-//     `@name` invokes whatever `name` resolves to in module scope.
+//     renderers) plus the document's defined/imported names, since `@name`
+//     invokes whatever `name` resolves to in module scope.
 // In both contexts we also offer exports from any *not-yet-imported* JS file in
 // the workspace; accepting one carries an auto-import edit (see buildImportEdits)
 // that adds the ESM import to a declaration block.
@@ -33,11 +33,10 @@ for (const format of Object.values(stdlib)) {
 	}
 }
 
-// Format-independent globals splatted by spruce.js's _compileImpl: include() (a
-// function), filePath (the document's absolute path), and JSON5 (the parser used
-// for json-block arguments). Kept in step with the setGlobal calls there.
+// Format-independent globals splatted by spruce.js's _compileImpl: filePath (the
+// document's absolute path) and JSON5 (the parser used for json-block arguments).
+// Kept in step with the setGlobal calls there.
 const EXTRA_GLOBALS = [
-	{ label: "include", kind: "function", detail: "(specifier) — import a helper module's exports" },
 	{ label: "filePath", kind: "constant", detail: "absolute path of the current document" },
 	{ label: "JSON5", kind: "module", detail: "JSON5 parser" },
 ];
@@ -127,14 +126,12 @@ function callPrefix(text, offset) {
 const FUNC_DECL = /(?:^|[\s;}])(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/g;
 const VAR_FUNC = /(?:^|[\s;}])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/g;
 const VAR_ANY = /(?:^|[\s;}])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g;
-const INCLUDE_CALL = /\binclude\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
 const IMPORT_STMT = /\bimport\s+([^;'"]*?)\s+from\s*["']([^"']+)["']/g;
 
 // Names the document makes available in module scope: top-level function/const
-// declarations in any declaration block, every export pulled in by an include()
-// call, and every binding of an `import ... from` statement. Returned as a
-// name -> item Map so callers can dedupe; functions win over plain variables
-// when a name appears both ways.
+// declarations in any declaration block, and every binding of an
+// `import ... from` statement. Returned as a name -> item Map so callers can
+// dedupe; functions win over plain variables when a name appears both ways.
 function definedNames(text, filePath, roots) {
 	const items = new Map();
 	const add = (name, kind, detail) => {
@@ -158,13 +155,51 @@ function definedNames(text, filePath, roots) {
 		}
 	}
 
-	for (const m of text.matchAll(INCLUDE_CALL)) {
-		for (const exp of moduleExports(m[1], filePath, roots)) {
-			add(exp.label, exp.kind, `included from ${m[1]}`);
+	return items;
+}
+
+// Every name that resolves in `text`'s module scope: the reserved stdlib names
+// (functions, constants, and injected globals) plus everything the document
+// defines or imports. A bare `@name` call whose name isn't in this set resolves
+// to nothing, so the tokenizer flags it as an undefined function. Name-only and
+// side-effect-free (no module exports are read), so it's cheap to call per edit.
+export function inScopeNames(text) {
+	const names = new Set(RESERVED_NAMES);
+	for (const name of definedNames(text, null, []).keys()) names.add(name);
+	return names;
+}
+
+// The source ranges (absolute offsets) of import statements whose every binding
+// is unused — i.e. the local name never appears anywhere outside the import
+// statements themselves (not as an `@name` call, not referenced in declaration
+// JS). The server marks these with the Unnecessary tag so VSCode dims them, the
+// way it grays an unused JS import. Statement-level (not per-binding): an import
+// is dimmed only when all of its bindings are unused, which is the common case
+// for the single-binding imports the auto-import edit produces.
+export function unusedImportRanges(text) {
+	const stmts = [];
+	for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
+		const body = text.slice(bodyStart, bodyEnd);
+		for (const m of body.matchAll(IMPORT_STMT)) {
+			const start = bodyStart + m.index;
+			stmts.push({ start, end: start + m[0].length, locals: parseImportClause(m[1]).map(b => b.local) });
 		}
 	}
+	if (stmts.length === 0) return [];
 
-	return items;
+	// Blank out every import statement so a binding only counts as "used" when it
+	// occurs somewhere other than an import (an @-call or a JS reference).
+	const chars = text.split("");
+	for (const s of stmts) for (let i = s.start; i < s.end; i++) chars[i] = " ";
+	const masked = chars.join("");
+
+	const ranges = [];
+	for (const s of stmts) {
+		const allUnused = s.locals.length > 0
+			&& s.locals.every(name => !new RegExp(`\\b${escapeRe(name)}\\b`).test(masked));
+		if (allUnused) ranges.push({ start: s.start, end: s.end });
+	}
+	return ranges;
 }
 
 // Local bindings introduced by an `import` clause (the text between `import` and
@@ -190,13 +225,14 @@ function parseImportClause(clause) {
 	return bindings;
 }
 
-// The filesystem paths an include()/import specifier might resolve to, mirroring
-// makeIncludeResolver in spruce.js: a relative specifier resolves against the
-// cwd spruce runs from — which the editor can't know, so we try the document's
-// own directory and every workspace root — and an absolute "/x" specifier
-// resolves against a root (the compiler's --root). Bare specifiers (node
-// packages) are left to default resolution and skipped here.
-function includeCandidates(specifier, filePath, roots) {
+// The filesystem paths an import specifier might resolve to, mirroring how the
+// compiler resolves a declaration block's imports (see importHooks.js): a
+// relative specifier resolves against the cwd spruce runs from — which the
+// editor can't know, so we try the document's own directory and every workspace
+// root — and an absolute "/x" specifier resolves against a root (the compiler's
+// --root). Bare specifiers (node packages) are left to default resolution and
+// skipped here.
+function importCandidates(specifier, filePath, roots) {
 	if (specifier.startsWith("/")) {
 		return roots.map(root => join(root, specifier));
 	}
@@ -210,10 +246,9 @@ function includeCandidates(specifier, filePath, roots) {
 }
 
 // Resolve a specifier to a file and statically read its named exports, or [] if
-// it can't be resolved/read. Wraps extractExports for the include() and import
-// code paths.
+// it can't be resolved/read. Wraps extractExports for the import code path.
 function moduleExports(specifier, filePath, roots) {
-	for (const candidate of includeCandidates(specifier, filePath, roots)) {
+	for (const candidate of importCandidates(specifier, filePath, roots)) {
 		try {
 			return extractExports(readFileSync(candidate, "utf8"));
 		} catch {
@@ -254,7 +289,7 @@ const MAX_FILES = 1500;
 // A `./`-relative specifier from a workspace root to a file, using POSIX
 // separators (what an ESM import wants). Imports inside a declaration block
 // resolve against the cwd spruce runs from — normally the workspace root — so a
-// root-relative path is the cwd-stable choice, matching include()'s resolution.
+// root-relative path is the cwd-stable choice.
 function relSpecifier(root, file) {
 	let rel = relative(root, file).split(sep).join("/");
 	if (!rel.startsWith(".")) rel = "./" + rel;
@@ -313,6 +348,16 @@ function escapeRe(s) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// One indentation step for the document, inferred from the first indented line:
+// a leading tab means tabs (one tab per step), otherwise the leading run of
+// spaces is taken as one step. Falls back to a single tab when nothing in the
+// document is indented yet.
+function detectIndent(text) {
+	const m = /^([ \t]+)\S/m.exec(text);
+	if (!m) return "\t";
+	return m[1][0] === "\t" ? "\t" : m[1];
+}
+
 // The text edits (offset-based, for server.mjs to turn into LSP TextEdits) that
 // add `import { name } from "<specifier>"` to the document. Per the requested
 // behavior we always target a *non-targeted* (`@@@` with no format) declaration
@@ -321,7 +366,8 @@ function escapeRe(s) {
 // the document. Returns [] when the name is already imported from that specifier.
 export function buildImportEdits(text, specifier, name) {
 	const blocks = declarationBlocks(text).filter(b => b.tag === "");
-	const importLine = `import { ${name} } from "${specifier}";`;
+	const indent = detectIndent(text);
+	const importLine = `${indent}import { ${name} } from "${specifier}";`;
 
 	if (blocks.length === 0) {
 		return [{ start: 0, end: 0, newText: `@@@\n${importLine}\n@@@\n\n` }];
