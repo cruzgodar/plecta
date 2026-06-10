@@ -89,14 +89,15 @@ test("a named import resolves its bindings' kinds from the module's exports", ()
 	}
 });
 
-test("a relative import resolves against a workspace root, not just the doc dir", () => {
-	// The helper sits at the project root; the document is in a subfolder and
-	// imports it the way the spruce CLI (run from the root) would resolve it.
+test("a relative import resolves against the document's own directory", () => {
+	// The helper sits at the project root; the document is in a subfolder, so the
+	// import has to climb out with `../`, the way the compiler resolves it.
 	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
 	try {
 		writeFileSync(join(root, "helpers.js"), "export function fromRoot() {}");
+		mkdirSync(join(root, "posts"));
 		const docPath = join(root, "posts", "doc.sp");
-		const doc = '@@@\nimport { fromRoot } from "./helpers.js"\n@@@\n\n@f';
+		const doc = '@@@\nimport { fromRoot } from "../helpers.js"\n@@@\n\n@f';
 		const items = collectCompletions(doc, doc.length, { filePath: docPath, roots: [root] });
 		assert.equal(find(items, "fromRoot")?.kind, "function");
 	} finally {
@@ -104,11 +105,12 @@ test("a relative import resolves against a workspace root, not just the doc dir"
 	}
 });
 
-test("an absolute import specifier resolves against the workspace root", () => {
+test("an absolute import specifier is a filesystem path", () => {
 	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
 	try {
-		writeFileSync(join(root, "lib.js"), "export function abs() {}");
-		const doc = '@@@\nimport { abs } from "/lib.js"\n@@@\n\n@a';
+		const libPath = join(root, "lib.js");
+		writeFileSync(libPath, "export function abs() {}");
+		const doc = `@@@\nimport { abs } from "${libPath}"\n@@@\n\n@a`;
 		const items = collectCompletions(doc, doc.length, { filePath: join(root, "doc.sp"), roots: [root] });
 		assert.equal(find(items, "abs")?.kind, "function");
 	} finally {
@@ -117,9 +119,27 @@ test("an absolute import specifier resolves against the workspace root", () => {
 });
 
 test("an unresolvable import is ignored without throwing", () => {
-	const doc = '@@@\nimport { x } from "/lib/x.js"\n@@@\n\n@a';
+	const doc = '@@@\nimport { x } from "./missing.js"\n@@@\n\n@a';
 	const items = collectCompletions(doc, doc.length, { filePath: "/some/doc.sp", roots: [] });
 	assert.ok(Array.isArray(items));
+});
+
+test("auto-import specifiers are generated relative to the document's directory", () => {
+	const root = mkdtempSync(join(tmpdir(), "spruce-completion-"));
+	try {
+		mkdirSync(join(root, "sub"));
+		writeFileSync(join(root, "sub", "helper.js"), "export function gadget() {}");
+		mkdirSync(join(root, "posts"));
+		const docPath = join(root, "posts", "doc.sp");
+		// Cursor is in @-call position, so workspace auto-imports are offered.
+		const doc = "@g";
+		const items = collectCompletions(doc, doc.length, { filePath: docPath, roots: [root] });
+		const gadget = find(items, "gadget");
+		assert.ok(gadget?.autoImport, "gadget is offered as an auto-import");
+		assert.equal(gadget.autoImport.specifier, "../sub/helper.js");
+	} finally {
+		rmSync(root, { recursive: true });
+	}
 });
 
 test("inScopeNames includes reserved names, document definitions, and imports", () => {
@@ -146,4 +166,18 @@ test("unusedImportRanges leaves an @-call-used import alone", () => {
 test("unusedImportRanges leaves an import used only in declaration JS alone", () => {
 	const doc = '@@@\nimport { helper } from "./x.js";\nfunction wrap(x) { return helper(x); }\n@@@\n';
 	assert.deepEqual(unusedImportRanges(doc), []);
+});
+
+test("unusedImportRanges dims only the unused binding when an import is partly used", () => {
+	const doc = '@@@\nimport { used, dead } from "./x.js";\n@@@\n\n@used[hi]';
+	const ranges = unusedImportRanges(doc);
+	assert.equal(ranges.length, 1);
+	assert.equal(doc.slice(ranges[0].start, ranges[0].end), "dead");
+});
+
+test("unusedImportRanges dims an aliased unused binding at its alias", () => {
+	const doc = '@@@\nimport { used, orig as dead } from "./x.js";\n@@@\n\n@used[hi]';
+	const ranges = unusedImportRanges(doc);
+	assert.equal(ranges.length, 1);
+	assert.equal(doc.slice(ranges[0].start, ranges[0].end), "dead");
 });

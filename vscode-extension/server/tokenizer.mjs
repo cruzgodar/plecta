@@ -303,6 +303,16 @@ function scanJsonNumber(text, i, end) {
 	return j;
 }
 
+// True when a call's function name resolves to nothing — used to paint the @
+// (and a wrapped call's parens) red, matching the undefinedFunction name token.
+// Returns false when detection is off (no known-names set) or there's no name
+// (e.g. a raw @{} call). The name is the identifier right after the @.
+function callNameUndefined(node) {
+	if (!currentKnownNames) return false;
+	const m = /@[ \t]*([A-Za-z_$][A-Za-z0-9_$]*)/.exec(node.sourceString);
+	return m ? !currentKnownNames.has(m[1]) : false;
+}
+
 // Rule handlers. Returning true means "fully handled, don't recurse into children";
 // returning undefined falls through to recursing into all children.
 const handlers = {
@@ -418,21 +428,29 @@ const handlers = {
 	// sequential bracket colors, so we take over recursion to interleave
 	// open-paren / @ / body / close-paren correctly.
 	functionCall_wrapped(node, t) {
+		// When the wrapped call's name is undefined, the @ *and* the wrapping parens
+		// turn red (the `invalid` color) instead of purple. The name itself takes
+		// the distinct `undefinedFunction` type so the server raises exactly one
+		// error diagnostic per call (off the name), not one per red token.
+		const callType = callNameUndefined(node) ? "invalid" : "spruceFunction";
 		emitBracketed(node, t, () => {
 			const atOffset = node.source.contents.indexOf("@");
 			if (atOffset >= 0) {
 				const s = node.source.startIdx + atOffset;
-				emit(t, s, s + 1, "spruceFunction");
+				emit(t, s, s + 1, callType);
 			}
 			// A function call resets the bracket-color sequence: its first argument
 			// block (the next delimiter after the call) is always yellow.
 			bracketColorCounter = 0;
 			for (const c of node.children) c.collect(t);
-		}, "spruceFunction");
+		}, callType);
 		return true;
 	},
 	functionCall_bare(node, t) {
-		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
+		// The @ turns red (the `invalid` color) along with the name when the call is
+		// to an undefined name; the name token alone carries `undefinedFunction`.
+		const callType = callNameUndefined(node) ? "invalid" : "spruceFunction";
+		emit(t, node.source.startIdx, node.source.startIdx + 1, callType);
 		// Reset so the first argument block after the call is yellow (see wrapped).
 		bracketColorCounter = 0;
 		for (const c of node.children) c.collect(t);

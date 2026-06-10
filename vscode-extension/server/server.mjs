@@ -15,10 +15,10 @@ import { buildImportEdits, collectCompletions, inScopeNames, unusedImportRanges 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
-// Workspace roots, captured at initialize. A declaration block's imports resolve
-// relative specifiers against the cwd spruce is run from (usually a workspace
-// root) and absolute "/x" specifiers against --root, so these are the bases we
-// try when statically resolving an imported module for completion.
+// Workspace roots, captured at initialize. Used to scan the workspace for
+// auto-import candidates; the import specifiers themselves are generated relative
+// to the document being edited (a declaration block's imports resolve against the
+// document's own directory).
 let workspaceRoots = [];
 
 connection.onInitialize((params) => {

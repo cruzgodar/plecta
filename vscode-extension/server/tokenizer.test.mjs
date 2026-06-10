@@ -478,11 +478,24 @@ test("with no known-names set, a call name stays spruceFunction", () => {
 test("a call name absent from the known-names set is flagged undefinedFunction", () => {
 	const src = "@nope[x]";
 	const tokens = collectTokens(src, new Set(["heading"]));
-	const name = tokens.find(t => t.type === "undefinedFunction");
+	const name = tokens.find(t => t.type === "undefinedFunction" && src.slice(t.start, t.end) === "nope");
 	assert.ok(name, "name flagged undefined");
-	assert.equal(src.slice(name.start, name.end), "nope");
-	// The leading @ stays a function marker; only the name turns red.
-	assert.ok(tokens.find(t => t.type === "spruceFunction"));
+	// The leading @ turns red too (the `invalid` color), not purple.
+	const at = tokens.find(t => t.start === 0 && t.end === 1);
+	assert.equal(at.type, "invalid", "the @ is red as well");
+	assert.ok(!tokens.find(t => t.type === "spruceFunction"));
+});
+
+test("a wrapped call to an undefined name paints its parens red too", () => {
+	const src = "(@nope[x])";
+	const tokens = collectTokens(src, new Set(["heading"]));
+	const open = tokens.find(t => t.start === 0 && t.end === 1);
+	const close = tokens.find(t => t.start === src.length - 1 && t.end === src.length);
+	assert.equal(open.type, "invalid", "open paren is red");
+	assert.equal(close.type, "invalid", "close paren is red");
+	// A defined name keeps the parens purple.
+	const ok = collectTokens(src, new Set(["nope"]));
+	assert.equal(ok.find(t => t.start === 0 && t.end === 1).type, "spruceFunction");
 });
 
 test("a known call name stays spruceFunction even when detection is on", () => {
@@ -493,7 +506,7 @@ test("a known call name stays spruceFunction even when detection is on", () => {
 
 test("an undefined call inside a parsed block keeps a correct absolute offset", () => {
 	const src = "[[ @ghost[x] ]]";
-	const tok = collectTokens(src, new Set()).find(t => t.type === "undefinedFunction");
-	assert.ok(tok);
+	const tok = collectTokens(src, new Set()).find(t => t.type === "undefinedFunction" && src.slice(t.start, t.end) === "ghost");
+	assert.ok(tok, "the undefined name keeps its absolute offset inside the block");
 	assert.equal(src.slice(tok.start, tok.end), "ghost");
 });

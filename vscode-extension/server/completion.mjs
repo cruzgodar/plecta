@@ -132,7 +132,7 @@ const IMPORT_STMT = /\bimport\s+([^;'"]*?)\s+from\s*["']([^"']+)["']/g;
 // declarations in any declaration block, and every binding of an
 // `import ... from` statement. Returned as a name -> item Map so callers can
 // dedupe; functions win over plain variables when a name appears both ways.
-function definedNames(text, filePath, roots) {
+function definedNames(text, filePath) {
 	const items = new Map();
 	const add = (name, kind, detail) => {
 		const existing = items.get(name);
@@ -147,7 +147,7 @@ function definedNames(text, filePath, roots) {
 		for (const m of body.matchAll(VAR_ANY)) add(m[1], "variable", "defined in document");
 
 		for (const m of body.matchAll(IMPORT_STMT)) {
-			const kinds = new Map(moduleExports(m[2], filePath, roots).map(e => [e.label, e.kind]));
+			const kinds = new Map(moduleExports(m[2], filePath).map(e => [e.label, e.kind]));
 			for (const { local, imported } of parseImportClause(m[1])) {
 				const kind = imported && imported !== "default" ? (kinds.get(imported) ?? "variable") : "variable";
 				add(local, kind, `imported from ${m[2]}`);
@@ -165,26 +165,21 @@ function definedNames(text, filePath, roots) {
 // side-effect-free (no module exports are read), so it's cheap to call per edit.
 export function inScopeNames(text) {
 	const names = new Set(RESERVED_NAMES);
-	for (const name of definedNames(text, null, []).keys()) names.add(name);
+	for (const name of definedNames(text, null).keys()) names.add(name);
 	return names;
 }
 
-// The source ranges (absolute offsets) of import statements whose every binding
-// is unused — i.e. the local name never appears anywhere outside the import
-// statements themselves (not as an `@name` call, not referenced in declaration
-// JS). The server marks these with the Unnecessary tag so VSCode dims them, the
-// way it grays an unused JS import. Statement-level (not per-binding): an import
-// is dimmed only when all of its bindings are unused, which is the common case
-// for the single-binding imports the auto-import edit produces.
+// The source ranges (absolute offsets) of unused imports — a local name that
+// never appears anywhere outside the import statements themselves (not as an
+// `@name` call, not referenced in declaration JS). The server marks these with
+// the Unnecessary tag so VSCode dims them, the way it grays unused JS imports.
+// When every binding of a statement is unused the whole statement is returned;
+// when only some are, each unused binding's own name range is returned (matching
+// how VSCode dims individual unused specifiers). Per-binding ranges are produced
+// for named-group bindings (`{ a, b }`); a lone default/namespace binding is
+// only dimmed via the whole-statement (all-unused) case.
 export function unusedImportRanges(text) {
-	const stmts = [];
-	for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
-		const body = text.slice(bodyStart, bodyEnd);
-		for (const m of body.matchAll(IMPORT_STMT)) {
-			const start = bodyStart + m.index;
-			stmts.push({ start, end: start + m[0].length, locals: parseImportClause(m[1]).map(b => b.local) });
-		}
-	}
+	const stmts = importStatements(text);
 	if (stmts.length === 0) return [];
 
 	// Blank out every import statement so a binding only counts as "used" when it
@@ -192,14 +187,64 @@ export function unusedImportRanges(text) {
 	const chars = text.split("");
 	for (const s of stmts) for (let i = s.start; i < s.end; i++) chars[i] = " ";
 	const masked = chars.join("");
+	const isUsed = name => new RegExp(`\\b${escapeRe(name)}\\b`).test(masked);
 
 	const ranges = [];
 	for (const s of stmts) {
-		const allUnused = s.locals.length > 0
-			&& s.locals.every(name => !new RegExp(`\\b${escapeRe(name)}\\b`).test(masked));
-		if (allUnused) ranges.push({ start: s.start, end: s.end });
+		const unused = s.locals.filter(name => !isUsed(name));
+		if (unused.length === 0) continue;
+		if (unused.length === s.locals.length) {
+			ranges.push({ start: s.start, end: s.end });
+		} else {
+			for (const b of s.named) {
+				if (!isUsed(b.local)) ranges.push({ start: b.nameStart, end: b.nameEnd });
+			}
+		}
 	}
 	return ranges;
+}
+
+// Every import statement in the document's declaration blocks, with absolute
+// offsets: `start`/`end` span the whole statement, `locals` is every binding's
+// local name, and `named` carries the `{ ... }`-group bindings with the absolute
+// range of each local name token (used for per-binding dimming).
+function importStatements(text) {
+	const out = [];
+	for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
+		const body = text.slice(bodyStart, bodyEnd);
+		for (const m of body.matchAll(IMPORT_STMT)) {
+			const start = bodyStart + m.index;
+			const clauseBase = start + /^import\s+/.exec(m[0])[0].length;
+			out.push({
+				start,
+				end: start + m[0].length,
+				locals: parseImportClause(m[1]).map(b => b.local),
+				named: namedBindingRanges(m[1], clauseBase),
+			});
+		}
+	}
+	return out;
+}
+
+// The `{ ... }`-group bindings of an import clause, each with the absolute range
+// of its local name (the alias when one is present). `clauseBase` is the
+// absolute offset of the clause's first character.
+function namedBindingRanges(clause, clauseBase) {
+	const out = [];
+	const group = /\{([^}]*)\}/.exec(clause);
+	if (!group) return out;
+	const contentBase = clauseBase + group.index + 1; // past the "{"
+	const re = /([A-Za-z_$][\w$]*)(\s+as\s+([A-Za-z_$][\w$]*))?/g;
+	let m;
+	while ((m = re.exec(group[1]))) {
+		const local = m[3] || m[1];
+		// The alias (m[3]) sits after the name and the " as " connector; otherwise
+		// the binding name is the local itself.
+		const rel = m[3] ? m.index + m[1].length + (m[2].length - m[3].length) : m.index;
+		const nameStart = contentBase + rel;
+		out.push({ local, nameStart, nameEnd: nameStart + local.length });
+	}
+	return out;
 }
 
 // Local bindings introduced by an `import` clause (the text between `import` and
@@ -225,37 +270,27 @@ function parseImportClause(clause) {
 	return bindings;
 }
 
-// The filesystem paths an import specifier might resolve to, mirroring how the
-// compiler resolves a declaration block's imports (see importHooks.js): a
-// relative specifier resolves against the cwd spruce runs from — which the
-// editor can't know, so we try the document's own directory and every workspace
-// root — and an absolute "/x" specifier resolves against a root (the compiler's
-// --root). Bare specifiers (node packages) are left to default resolution and
-// skipped here.
-function importCandidates(specifier, filePath, roots) {
-	if (specifier.startsWith("/")) {
-		return roots.map(root => join(root, specifier));
-	}
-	if (specifier.startsWith(".")) {
-		const bases = [];
-		if (filePath) bases.push(dirname(filePath));
-		bases.push(...roots);
-		return bases.map(base => resolvePath(base, specifier));
-	}
-	return [];
+// The filesystem path an import specifier resolves to, mirroring how the
+// compiler resolves a declaration block's imports: relative specifiers resolve
+// against the document's own directory (the compiler writes its fragment there),
+// and an absolute "/x" specifier is a filesystem-absolute path. Bare specifiers
+// (node packages) are left to default resolution and skipped here.
+function importCandidate(specifier, filePath) {
+	if (specifier.startsWith("/")) return specifier;
+	if (specifier.startsWith(".") && filePath) return resolvePath(dirname(filePath), specifier);
+	return null;
 }
 
 // Resolve a specifier to a file and statically read its named exports, or [] if
 // it can't be resolved/read. Wraps extractExports for the import code path.
-function moduleExports(specifier, filePath, roots) {
-	for (const candidate of importCandidates(specifier, filePath, roots)) {
-		try {
-			return extractExports(readFileSync(candidate, "utf8"));
-		} catch {
-			// Try the next candidate base.
-		}
+function moduleExports(specifier, filePath) {
+	const candidate = importCandidate(specifier, filePath);
+	if (!candidate) return [];
+	try {
+		return extractExports(readFileSync(candidate, "utf8"));
+	} catch {
+		return [];
 	}
-	return [];
 }
 
 // Statically read a module's named exports without executing it (the LSP must
@@ -286,17 +321,17 @@ function extractExports(src) {
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", "coverage"]);
 const MAX_FILES = 1500;
 
-// A `./`-relative specifier from a workspace root to a file, using POSIX
-// separators (what an ESM import wants). Imports inside a declaration block
-// resolve against the cwd spruce runs from — normally the workspace root — so a
-// root-relative path is the cwd-stable choice.
-function relSpecifier(root, file) {
-	let rel = relative(root, file).split(sep).join("/");
+// A `./`- or `../`-relative specifier from the document's directory to a file,
+// using POSIX separators (what an ESM import wants). Declaration-block imports
+// resolve against the document's own directory, so a doc-relative path is what
+// actually resolves at compile time.
+function relSpecifier(fromDir, file) {
+	let rel = relative(fromDir, file).split(sep).join("/");
 	if (!rel.startsWith(".")) rel = "./" + rel;
 	return rel;
 }
 
-function walkJsFiles(dir, root, out, budget) {
+function walkJsFiles(dir, out, budget) {
 	let entries;
 	try {
 		entries = readdirSync(dir, { withFileTypes: true });
@@ -308,7 +343,7 @@ function walkJsFiles(dir, root, out, budget) {
 		if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
 		const full = join(dir, entry.name);
 		if (entry.isDirectory()) {
-			if (!SKIP_DIRS.has(entry.name)) walkJsFiles(full, root, out, budget);
+			if (!SKIP_DIRS.has(entry.name)) walkJsFiles(full, out, budget);
 		} else if (entry.isFile() && /\.(mjs|cjs|js)$/.test(entry.name)) {
 			budget.count++;
 			let src;
@@ -317,9 +352,10 @@ function walkJsFiles(dir, root, out, budget) {
 			} catch {
 				continue;
 			}
-			const specifier = relSpecifier(root, full);
+			// Store the absolute path; the import specifier is computed per document
+			// (relative to whichever file is being edited) when items are built.
 			for (const exp of extractExports(src)) {
-				out.push({ label: exp.label, kind: exp.kind, specifier });
+				out.push({ label: exp.label, kind: exp.kind, file: full });
 			}
 		}
 	}
@@ -336,7 +372,7 @@ function collectWorkspaceExports(roots) {
 
 	const items = [];
 	const budget = { count: 0 };
-	for (const root of roots) walkJsFiles(root, root, items, budget);
+	for (const root of roots) walkJsFiles(root, items, budget);
 
 	exportCache = { key, time: now, items };
 	return items;
@@ -404,20 +440,26 @@ function withDefined(reserved, defined) {
 
 // Workspace exports for names not already in scope, deduped by name+specifier so
 // the same symbol from two files stays distinguishable. Each carries `autoImport`
-// (the specifier) so the server can attach the import edit on accept.
-function autoImportItems(defined, roots) {
+// (the specifier) so the server can attach the import edit on accept. The
+// specifier is computed relative to the document being edited; without a file
+// path we can't form a resolvable relative import, so no auto-imports are
+// offered.
+function autoImportItems(defined, roots, filePath) {
+	if (!filePath) return [];
+	const fromDir = dirname(filePath);
 	const seen = new Set();
 	const items = [];
 	for (const exp of collectWorkspaceExports(roots)) {
 		if (RESERVED_NAMES.has(exp.label) || defined.has(exp.label)) continue;
-		const key = `${exp.label}\0${exp.specifier}`;
+		const specifier = relSpecifier(fromDir, exp.file);
+		const key = `${exp.label}\0${specifier}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
 		items.push({
 			label: exp.label,
 			kind: exp.kind,
-			detail: `auto-import from ${exp.specifier}`,
-			autoImport: { specifier: exp.specifier },
+			detail: `auto-import from ${specifier}`,
+			autoImport: { specifier },
 		});
 	}
 	return items;
@@ -427,7 +469,7 @@ function autoImportItems(defined, roots) {
 // cursor isn't in a completion context. Auto-import items carry an `autoImport`
 // field; the rest are plain { label, kind, detail }.
 export function collectCompletions(text, offset, { filePath = null, roots = [] } = {}) {
-	const defined = definedNames(text, filePath, roots);
+	const defined = definedNames(text, filePath);
 
 	let items;
 	if (inDeclarationBlock(text, offset)) {
@@ -438,5 +480,5 @@ export function collectCompletions(text, offset, { filePath = null, roots = [] }
 		return [];
 	}
 
-	return items.concat(autoImportItems(defined, roots));
+	return items.concat(autoImportItems(defined, roots, filePath));
 }

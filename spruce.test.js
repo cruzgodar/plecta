@@ -502,20 +502,6 @@ test("error: undefined function call rejects and logs red ANSI with the name", a
 	assert.match(combined, /\x1b\[1;31m\s*1\x1b\[0m/, "line 1 should be highlighted");
 });
 
-test("error: context still renders when a --root is in play", async (t) =>
-{
-	// Regression: with a root, the fragment is imported with a `?spruceRoot=...`
-	// query string, so the stack frame reads `.mjs?spruceRoot=/x:LINE:COL`. The
-	// fragment regex must skip that query or no context renders at all.
-	const logs = [];
-	t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
-
-	await assert.rejects(compile("hi\n\n@f\n\nbye", "html", null, "/tmp"));
-
-	const combined = logs.join("\n");
-	assert.match(combined, /\x1b\[1;31m\s*3\x1b\[0m/, "line 3 (the @f call) should be highlighted even with a root");
-});
-
 test("error: undefined function error highlights its own line, not a later one", async (t) =>
 {
 	// Regression: generated @text/@paragraph calls were not captured during
@@ -639,7 +625,7 @@ test("raw: markup is left literal, only @-calls are interpreted", async () =>
 {
 	// In raw mode the whole document behaves like the body of @{}: headings and
 	// emphasis stay literal, but @bold still runs.
-	const out = await compile("# not a heading\n**not bold** @bold[but this is]", "html", null, null, true);
+	const out = await compile("# not a heading\n**not bold** @bold[but this is]", "html", null, true);
 	assert.equal(out, "# not a heading\n**not bold** <strong>but this is</strong>");
 });
 
@@ -647,14 +633,14 @@ test("raw: same source differs from normal mode", async () =>
 {
 	const src = "# H\n";
 	assert.equal(await compile(src, "html"), "<h1>H</h1>\n");
-	assert.equal(await compile(src, "html", null, null, true), "# H\n");
+	assert.equal(await compile(src, "html", null, true), "# H\n");
 });
 
 test("raw: parsed-block arguments to @-calls are still parsed", async () =>
 {
 	// The [ ] argument of a raw-mode @-call is a parsed inline block, so emphasis
 	// inside it is interpreted even though the surrounding document is raw.
-	const out = await compile("@bold[**inner**]", "html", null, null, true);
+	const out = await compile("@bold[**inner**]", "html", null, true);
 	assert.equal(out, "<strong><strong>inner</strong></strong>");
 });
 
@@ -663,7 +649,7 @@ test("raw: declaration blocks are still interpreted", async () =>
 	// The @@@ block defines `shout` (and is stripped from output); markup stays
 	// literal, but the @shout call runs.
 	const src = `@@@html\nfunction shout(x) { return x.toUpperCase(); }\n@@@\n# literal @shout[hi]`;
-	const out = await compile(src, "html", null, null, true);
+	const out = await compile(src, "html", null, true);
 	assert.equal(out, "\n# literal HI");
 });
 

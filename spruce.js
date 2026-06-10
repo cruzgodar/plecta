@@ -3,28 +3,13 @@ import { randomUUID } from "crypto";
 import { realpathSync, unlinkSync } from "fs";
 import { readFile, unlink, writeFile } from "fs/promises";
 import JSON5 from "json5";
-import { register } from "module";
 import * as ohm from "ohm-js";
-import { extname, join, resolve as resolvePath } from "path";
+import { dirname, extname, join, resolve as resolvePath } from "path";
 import process from "process";
 import { pathToFileURL } from "url";
 import { stdlib } from "./stdlib.js";
 
 const pendingCleanup = new Set();
-
-// The resolve hook that reroutes absolute imports in declaration blocks runs on
-// a separate thread, so it's registered once and stays for the process. Imports
-// only get rerouted when their module URL carries a `?spruceRoot=` marker, so
-// registering this unconditionally is a no-op until a root is in play.
-let importHooksRegistered = false;
-function ensureImportHooks()
-{
-	if (!importHooksRegistered)
-	{
-		register("./importHooks.js", import.meta.url);
-		importHooksRegistered = true;
-	}
-}
 
 const bt = "`";
 
@@ -911,10 +896,9 @@ function logErrorMessage(ex)
 function logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName)
 {
 	const stack = ex.stack || `${ex}`;
-	// With --root the fragment is imported with a `?spruceRoot=...` query string,
-	// so the stack frame reads `.__fragments_<uuid>.mjs?spruceRoot=/x:LINE:COL`.
-	// Allow (and skip) that optional query between `.mjs` and the line:col.
-	const fragmentMatch = stack.match(/\.__fragments_[^:?]+\.mjs(?:\?[^:]*)?:(\d+):\d+/);
+	// The stack frame for the generated fragment reads
+	// `.__fragments_<uuid>.mjs:LINE:COL`; pull out the line number.
+	const fragmentMatch = stack.match(/\.__fragments_[^:?]+\.mjs:(\d+):\d+/);
 
 	if (!fragmentMatch) return false;
 
@@ -982,7 +966,7 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 	return false;
 }
 
-async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, root = null, baseDir = process.cwd())
+async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, baseDir = process.cwd())
 {
 	// Post-compile hooks (e.g. `document`) run on the host after this module,
 	// so a declaration-block binding can't shadow them the way inline @-calls
@@ -1002,19 +986,15 @@ ${code}
 ${captureOverrides}`;
 	if (process.env.SPRUCE_DEBUG_BODY) console.error("---BODY---\n" + body + "\n---END---");
 
+	// The fragment is written alongside the source document (baseDir), so the
+	// relative specifiers in its declaration-block imports resolve against the
+	// document's own directory — the intuitive, location-stable choice.
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
 
 	await writeFile(path, body);
 	pendingCleanup.add(path);
 
-	// Tag the import URL with the root so importHooks.js can reroute absolute
-	// ("/x") specifiers in this block — and its import subgraph — to <root>/x.
 	const moduleUrl = pathToFileURL(path);
-	if (root)
-	{
-		moduleUrl.searchParams.set("spruceRoot", root);
-		ensureImportHooks();
-	}
 
 	try
 	{
@@ -1054,14 +1034,14 @@ process.on("SIGINT", () => process.exit(130))
 // access. Chaining keeps the public API a plain async function.
 let compileQueue = Promise.resolve();
 
-export function compile(input, outputFormat, filePath = null, root = null, raw = false)
+export function compile(input, outputFormat, filePath = null, raw = false)
 {
-	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, root, raw));
+	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, raw));
 	compileQueue = next.catch(() => {});
 	return next;
 }
 
-async function _compileImpl(input, outputFormat, filePath, root, raw)
+async function _compileImpl(input, outputFormat, filePath, raw)
 {
 	// Snapshot the keys we're about to splat so we can restore on the way out.
 	// Users still override behavior by declaring/importing the name in their
@@ -1111,7 +1091,10 @@ async function _compileImpl(input, outputFormat, filePath, root, raw)
 		const desugared = desugar(spruce.match(input, startRule));
 		const desugaredMatch = spruce.match(desugared, startRule);
 		const { codeToExecute, functionCallLocations, declarationBlockRanges, storageName } = getCode(desugaredMatch, outputFormat);
-		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName, root);
+		// Write the fragment next to the document so its imports resolve relative to
+		// the document's directory; fall back to the cwd when compiling without a path.
+		const baseDir = filePath ? dirname(filePath) : process.cwd();
+		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName, baseDir);
 		let result = insertCodeOutput(desugaredMatch, __spruceOutput);
 
 		const formatStdlib = stdlib[outputFormat];
@@ -1148,7 +1131,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	const argv = process.argv.slice(2);
 	const positional = [];
 	let formatOverride = null;
-	let rootOverride = null;
 	let rawMode = false;
 
 	for (let i = 0; i < argv.length; i++)
@@ -1157,10 +1139,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		if (arg === "-f" || arg === "--format")
 		{
 			formatOverride = argv[++i];
-		}
-		else if (arg === "--root")
-		{
-			rootOverride = argv[++i];
 		}
 		else if (arg === "-r" || arg === "--raw")
 		{
@@ -1176,13 +1154,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 
 	if (!inputPath || !outputPath)
 	{
-		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [--root <dir>] [-r|--raw]\n");
+		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--raw]\n");
 		process.exit(1);
 	}
 
 	const outputFormat = formatOverride ?? extname(outputPath).slice(1).toLowerCase();
-	// Resolve --root against the cwd so relative roots behave intuitively.
-	const root = rootOverride ? resolvePath(rootOverride) : null;
 
 	const input = await readFile(inputPath, "utf-8");
 	try
@@ -1190,7 +1166,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		// Pass the absolute input path so post-compile hooks (e.g. `document`) get a
 		// stable, fully-qualified path rather than whatever relative form the CLI
 		// was invoked with.
-		const result = await compile(input, outputFormat, resolvePath(inputPath), root, rawMode);
+		const result = await compile(input, outputFormat, resolvePath(inputPath), rawMode);
 		await writeFile(outputPath, result);
 	}
 	catch (ex)
