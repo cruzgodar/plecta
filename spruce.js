@@ -1090,7 +1090,7 @@ function logSourceError(ex, body, source, functionCallLocations, declarationBloc
 	return false;
 }
 
-async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, baseDir = process.cwd())
+async function runCode(code, source, functionCallLocations, declarationBlockRanges, storageName, baseDir = process.cwd(), filePath = null)
 {
 	// Post-compile hooks (e.g. `document`) run on the host after this module,
 	// so a declaration-block binding can't shadow them the way inline @-calls
@@ -1115,7 +1115,20 @@ ${captureOverrides}`;
 	// document's own directory — the intuitive, location-stable choice.
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
 
-	await writeFile(path, body);
+	// The fragment can't be written if baseDir doesn't exist or isn't writable —
+	// most commonly because compile() was handed a filePath in a directory that
+	// isn't there. Surface that as a clear message instead of letting the raw
+	// ENOENT for the randomly-named temp file bubble up from deep in writeFile.
+	try
+	{
+		await writeFile(path, body);
+	}
+
+	catch(ex)
+	{
+		throw new Error(`Couldn't write the compiled output to ${baseDir}${filePath ? ` (the directory of filePath "${filePath}")` : ""}: ${ex.message}`);
+	}
+
 	pendingCleanup.add(path);
 
 	const moduleUrl = pathToFileURL(path);
@@ -1226,7 +1239,7 @@ async function _compileImpl(input, outputFormat, { raw = false, preserveWhitespa
 		// Write the fragment next to the document so its imports resolve relative to
 		// the document's directory; fall back to the cwd when compiling without a path.
 		const baseDir = filePath ? dirname(filePath) : process.cwd();
-		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName, baseDir);
+		const __spruceOutput = await runCode(codeToExecute, input, functionCallLocations, declarationBlockRanges, storageName, baseDir, filePath);
 		let result = insertCodeOutput(desugaredMatch, __spruceOutput);
 
 		const formatStdlib = stdlib[outputFormat];

@@ -4,6 +4,13 @@
   "type": "module",
   "description": "A markdown-like language with JavaScript folding that can compile to HTML and LaTeX",
   "main": "spruce.js",
+  "types": "./spruce.d.ts",
+  "exports": {
+    ".": {
+      "types": "./spruce.d.ts",
+      "default": "./spruce.js"
+    }
+  },
   "bin": {
     "spruce": "spruce.js"
   },

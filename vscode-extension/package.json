@@ -4,6 +4,9 @@
   "description": "Syntax highlighting for the Spruce markup language via LSP semantic tokens",
   "version": "0.0.1",
   "publisher": "cruzgodar",
+  "exports": {
+    ".": "./spruce.js"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
