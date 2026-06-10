@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildImportEdits, collectCompletions, inScopeNames, unusedImportRanges } from "./completion.mjs";
+import { buildImportEdits, collectCompletions, inScopeNames, resolveDefinition, unusedImportRanges } from "./completion.mjs";
+import { pathToFileURL } from "node:url";
 
 const labels = items => items.map(i => i.label);
 const find = (items, label) => items.find(i => i.label === label);
@@ -122,6 +123,87 @@ test("an unresolvable import is ignored without throwing", () => {
 	const doc = '@@@\nimport { x } from "./missing.js"\n@@@\n\n@a';
 	const items = collectCompletions(doc, doc.length, { filePath: "/some/doc.sp", roots: [] });
 	assert.ok(Array.isArray(items));
+});
+
+test("resolveDefinition jumps to a name defined in a declaration block", () => {
+	const doc = '@@@\nfunction greet() {}\n@@@\n\nHello @greet';
+	const loc = resolveDefinition(doc, doc.lastIndexOf("greet") + 2, "/doc.sp");
+	assert.equal(loc.uri, pathToFileURL("/doc.sp").href);
+	// The definition span points at the `greet` token on line 1 (0-based).
+	assert.equal(loc.range.start.line, 1);
+	assert.equal(loc.range.start.character, "function ".length);
+	assert.equal(loc.range.end.character, "function greet".length);
+});
+
+test("resolveDefinition jumps to an imported name's source export", () => {
+	const dir = mkdtempSync(join(tmpdir(), "spruce-def-"));
+	try {
+		const lib = join(dir, "lib.js");
+		writeFileSync(lib, "const x = 1;\nexport function helper() {}\n");
+		const docPath = join(dir, "doc.sp");
+		const doc = '@@@\nimport { helper } from "./lib.js"\n@@@\n\n@helper';
+		const loc = resolveDefinition(doc, doc.lastIndexOf("helper") + 1, docPath);
+		assert.equal(loc.uri, pathToFileURL(lib).href);
+		assert.equal(loc.range.start.line, 1); // second line of lib.js
+		assert.equal(loc.range.start.character, "export function ".length);
+	} finally {
+		rmSync(dir, { recursive: true });
+	}
+});
+
+test("resolveDefinition follows an aliased import to the source name", () => {
+	const dir = mkdtempSync(join(tmpdir(), "spruce-def-"));
+	try {
+		const lib = join(dir, "lib.js");
+		writeFileSync(lib, "export const original = () => {};\n");
+		const docPath = join(dir, "doc.sp");
+		const doc = '@@@\nimport { original as aliased } from "./lib.js"\n@@@\n\n@aliased';
+		const loc = resolveDefinition(doc, doc.lastIndexOf("aliased") + 1, docPath);
+		assert.equal(loc.uri, pathToFileURL(lib).href);
+		assert.equal(loc.range.start.character, "export const ".length);
+		assert.equal(loc.range.end.character, "export const original".length);
+	} finally {
+		rmSync(dir, { recursive: true });
+	}
+});
+
+test("resolveDefinition falls back to the import line when the module is unreadable", () => {
+	const doc = '@@@\nimport { gone } from "./missing.js"\n@@@\n\n@gone';
+	const loc = resolveDefinition(doc, doc.lastIndexOf("gone") + 1, "/doc.sp");
+	assert.equal(loc.uri, pathToFileURL("/doc.sp").href);
+	assert.equal(loc.range.start.line, 1); // the import line in the document
+});
+
+test("resolveDefinition jumps a reserved name to the vendored stdlib", () => {
+	const doc = "Hello @bold[world]";
+	const loc = resolveDefinition(doc, doc.indexOf("bold") + 1, "/doc.sp");
+	assert.ok(loc, "reserved name resolves");
+	assert.match(loc.uri, /stdlib\.js$/);
+});
+
+test("resolveDefinition returns null off any identifier", () => {
+	const doc = "Just prose, no calls.";
+	assert.equal(resolveDefinition(doc, 0, "/doc.sp"), null);
+});
+
+test("auto-import respects VS Code exclude globs", () => {
+	const root = mkdtempSync(join(tmpdir(), "spruce-exclude-"));
+	try {
+		mkdirSync(join(root, "src"));
+		mkdirSync(join(root, "generated"));
+		writeFileSync(join(root, "src", "keep.js"), "export function kept() {}");
+		writeFileSync(join(root, "generated", "skip.js"), "export function skipped() {}");
+		writeFileSync(join(root, "noisy.gen.js"), "export function noisy() {}");
+		const docPath = join(root, "src", "doc.sp");
+		const doc = "Hello @k";
+		const opts = { filePath: docPath, roots: [root], excludes: ["**/generated", "**/*.gen.js"] };
+		const items = collectCompletions(doc, doc.length, opts);
+		assert.ok(find(items, "kept"), "non-excluded export is offered");
+		assert.equal(find(items, "skipped"), undefined, "export in an excluded directory is hidden");
+		assert.equal(find(items, "noisy"), undefined, "export in an excluded file is hidden");
+	} finally {
+		rmSync(root, { recursive: true });
+	}
 });
 
 test("auto-import specifiers are generated relative to the document's directory", () => {
@@ -259,4 +341,28 @@ test("buildImportEdits separates an extended group from following code", () => {
 test("buildImportEdits is a no-op when the name is already imported", () => {
 	const doc = '@@@\nimport { foo } from "./x.js";\n@@@\n';
 	assert.deepEqual(buildImportEdits(doc, "./x.js", "foo"), []);
+});
+
+test("buildImportEdits sorts a named group alphabetically when extending it", () => {
+	const doc = '@@@\nimport { foo, alpha } from "./x.js";\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "bravo"));
+	assert.equal(out, '@@@\nimport { alpha, bravo, foo } from "./x.js";\n@@@\n');
+});
+
+test("buildImportEdits inserts a new import line in sorted specifier order", () => {
+	const doc = '@@@\nimport { a } from "./a.js";\nimport { z } from "./z.js";\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./m.js", "mid"));
+	assert.equal(
+		out,
+		'@@@\nimport { a } from "./a.js";\n\timport { mid } from "./m.js";\nimport { z } from "./z.js";\n@@@\n',
+	);
+});
+
+test("buildImportEdits re-sorts an out-of-order import run when adding a line", () => {
+	const doc = '@@@\nimport { z } from "./z.js";\nimport { a } from "./a.js";\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./m.js", "mid"));
+	assert.equal(
+		out,
+		'@@@\nimport { a } from "./a.js";\n\timport { mid } from "./m.js";\nimport { z } from "./z.js";\n@@@\n',
+	);
 });

@@ -10,7 +10,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "url";
 import { collectTokens, tokenize, TOKEN_TYPES, TOKEN_MODIFIERS } from "./tokenizer.mjs";
-import { buildImportEdits, collectCompletions, inScopeNames, unusedImportRanges } from "./completion.mjs";
+import { buildImportEdits, collectCompletions, inScopeNames, resolveDefinition, unusedImportRanges } from "./completion.mjs";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -21,6 +21,38 @@ const documents = new TextDocuments(TextDocument);
 // document's own directory).
 let workspaceRoots = [];
 
+// Whether the client supports configuration pull (workspace/configuration). When
+// it does, we read files.exclude/search.exclude and skip those files in the scan.
+let hasConfigurationCapability = false;
+
+// The merged set of enabled exclude globs from files.exclude + search.exclude,
+// refreshed at initialize and whenever the client's configuration changes. Passed
+// into collectCompletions so excluded files aren't offered as auto-imports.
+let excludeGlobs = [];
+
+// Read files.exclude/search.exclude and keep only the globs the user has enabled
+// (value `true`; the conditional `{ when: ... }` form is skipped as unevaluable).
+async function refreshExcludes() {
+	if (!hasConfigurationCapability) return;
+	try {
+		const [filesExclude, searchExclude] = await Promise.all([
+			connection.workspace.getConfiguration("files.exclude"),
+			connection.workspace.getConfiguration("search.exclude"),
+		]);
+		const globs = new Set();
+		for (const map of [filesExclude, searchExclude]) {
+			if (map && typeof map === "object") {
+				for (const [glob, on] of Object.entries(map)) {
+					if (on === true) globs.add(glob);
+				}
+			}
+		}
+		excludeGlobs = [...globs];
+	} catch (err) {
+		connection.console.error(`exclude config failed: ${err && err.stack || err}`);
+	}
+}
+
 connection.onInitialize((params) => {
 	const folders = params.workspaceFolders;
 	if (folders && folders.length) {
@@ -28,6 +60,8 @@ connection.onInitialize((params) => {
 	} else if (params.rootUri) {
 		workspaceRoots = [fileURLToPath(params.rootUri)];
 	}
+
+	hasConfigurationCapability = Boolean(params.capabilities?.workspace?.configuration);
 
 	return {
 		capabilities: {
@@ -47,8 +81,40 @@ connection.onInitialize((params) => {
 				// Auto-import items defer their import edit to onCompletionResolve.
 				resolveProvider: true,
 			},
+			// Cmd/Ctrl+click on an @function call (or a name in a declaration block)
+			// jumps to its definition, the way VS Code does for JS.
+			definitionProvider: true,
 		},
 	};
+});
+
+// Pull the exclude settings once the client is ready; re-pull on any config change
+// (the auto-import scan reads excludeGlobs on its next run, so no cache busting is
+// needed — collectWorkspaceExports keys its cache on the glob set).
+connection.onInitialized(() => {
+	refreshExcludes();
+});
+
+connection.onDidChangeConfiguration(() => {
+	refreshExcludes();
+});
+
+// Resolve the identifier under the cursor to its definition: a declaration-block
+// function/const in this document, an imported name's source-module export, or a
+// reserved stdlib method. completion.mjs returns an LSP-ready { uri, range }.
+connection.onDefinition((params) => {
+	const doc = documents.get(params.textDocument.uri);
+	if (!doc) return null;
+	try {
+		const offset = doc.offsetAt(params.position);
+		const filePath = params.textDocument.uri.startsWith("file:")
+			? fileURLToPath(params.textDocument.uri)
+			: null;
+		return resolveDefinition(doc.getText(), offset, filePath);
+	} catch (err) {
+		connection.console.error(`definition failed: ${err && err.stack || err}`);
+		return null;
+	}
 });
 
 // Map completion.mjs's neutral kind strings onto LSP CompletionItemKinds.
@@ -67,7 +133,7 @@ connection.onCompletion((params) => {
 		const filePath = params.textDocument.uri.startsWith("file:")
 			? fileURLToPath(params.textDocument.uri)
 			: null;
-		return collectCompletions(doc.getText(), offset, { filePath, roots: workspaceRoots }).map((item) => ({
+		return collectCompletions(doc.getText(), offset, { filePath, roots: workspaceRoots, excludes: excludeGlobs }).map((item) => ({
 			label: item.label,
 			kind: COMPLETION_KIND[item.kind] ?? CompletionItemKind.Text,
 			detail: item.detail,

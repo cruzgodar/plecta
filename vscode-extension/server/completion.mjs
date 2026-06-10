@@ -16,6 +16,7 @@
 // that adds the ESM import to a declaration block.
 import { readdirSync, readFileSync } from "fs";
 import { dirname, join, relative, resolve as resolvePath, sep } from "path";
+import { fileURLToPath, pathToFileURL } from "url";
 import { stdlib } from "./stdlib.js";
 
 // Reserved names split by whether they're callable. Derived from the stdlib so
@@ -345,6 +346,61 @@ function extractExports(src) {
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", "coverage"]);
 const MAX_FILES = 1500;
 
+// Convert a VS Code exclude glob (a `files.exclude`/`search.exclude` key) to a
+// RegExp anchored to a workspace-root-relative POSIX path. Supports the subset VS
+// Code's settings use: `**` (any depth, including none across a following `/`),
+// `*`, `?`, and `{a,b}` brace alternations, plus literal path separators.
+function globToRegExp(glob) {
+	let re = "";
+	for (let i = 0; i < glob.length; i++) {
+		const c = glob[i];
+		if (c === "*") {
+			if (glob[i + 1] === "*") {
+				i++;
+				if (glob[i + 1] === "/") {
+					i++;
+					re += "(?:.*/)?"; // `**/` spans any number of leading dirs (including none)
+				} else {
+					re += ".*";
+				}
+			} else {
+				re += "[^/]*";
+			}
+		} else if (c === "?") {
+			re += "[^/]";
+		} else if (c === "{") {
+			re += "(?:";
+		} else if (c === "}") {
+			re += ")";
+		} else if (c === ",") {
+			re += "|";
+		} else if (".+^$()|[]\\/".includes(c)) {
+			re += "\\" + c;
+		} else {
+			re += c;
+		}
+	}
+	return new RegExp("^" + re + "$");
+}
+
+// Compile a list of exclude globs into matchers over root-relative POSIX paths:
+// `fileRes` tests a file path, `dirRes` tests a directory path (a `dir/**`-style
+// glob is stripped to its prefix so the directory itself prunes the whole subtree).
+function compileExcludes(globs) {
+	const fileRes = [];
+	const dirRes = [];
+	for (const g of globs) {
+		if (!g) continue;
+		fileRes.push(globToRegExp(g));
+		dirRes.push(globToRegExp(g.replace(/\/\*\*$/, "")));
+	}
+	return { fileRes, dirRes };
+}
+
+function matchesAny(res, path) {
+	return res.some(re => re.test(path));
+}
+
 // A `./`- or `../`-relative specifier from the document's directory to a file,
 // using POSIX separators (what an ESM import wants). Declaration-block imports
 // resolve against the document's own directory, so a doc-relative path is what
@@ -355,7 +411,10 @@ function relSpecifier(fromDir, file) {
 	return rel;
 }
 
-function walkJsFiles(dir, out, budget) {
+// `root` is the workspace root this walk descends from; `exclude` is the compiled
+// matcher (or null) used to honor VS Code's files.exclude/search.exclude settings.
+// Both directories and files are tested against it on their root-relative path.
+function walkJsFiles(dir, out, budget, root, exclude) {
 	let entries;
 	try {
 		entries = readdirSync(dir, { withFileTypes: true });
@@ -366,9 +425,13 @@ function walkJsFiles(dir, out, budget) {
 		if (budget.count >= MAX_FILES) return;
 		if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
 		const full = join(dir, entry.name);
+		const rel = relative(root, full).split(sep).join("/");
 		if (entry.isDirectory()) {
-			if (!SKIP_DIRS.has(entry.name)) walkJsFiles(full, out, budget);
+			if (SKIP_DIRS.has(entry.name)) continue;
+			if (exclude && matchesAny(exclude.dirRes, rel)) continue;
+			walkJsFiles(full, out, budget, root, exclude);
 		} else if (entry.isFile() && /\.(mjs|cjs|js)$/.test(entry.name)) {
+			if (exclude && matchesAny(exclude.fileRes, rel)) continue;
 			budget.count++;
 			let src;
 			try {
@@ -389,14 +452,15 @@ function walkJsFiles(dir, out, budget) {
 // returned list locally as the user types, so a short TTL cache is plenty.
 let exportCache = { key: null, time: 0, items: [] };
 
-function collectWorkspaceExports(roots) {
-	const key = roots.join("\0");
+function collectWorkspaceExports(roots, excludes = []) {
+	const key = roots.join("\0") + "" + excludes.join("\0");
 	const now = Date.now();
 	if (exportCache.key === key && now - exportCache.time < 5000) return exportCache.items;
 
+	const exclude = excludes.length ? compileExcludes(excludes) : null;
 	const items = [];
 	const budget = { count: 0 };
-	for (const root of roots) walkJsFiles(root, items, budget);
+	for (const root of roots) walkJsFiles(root, items, budget, root, exclude);
 
 	exportCache = { key, time: now, items };
 	return items;
@@ -447,14 +511,27 @@ function blankLineSeparatorEdits(text, block) {
 	return [{ start: at, end: at, newText: "\n" }];
 }
 
+// Sort key for a named-import binding: the imported (source) name, so `x as y`
+// orders by `x`. Falls back to the whole segment for anything unparseable.
+function bindingKey(segment) {
+	return /^([A-Za-z_$][\w$]*)/.exec(segment)?.[1] ?? segment;
+}
+
+// The module specifier of a single import line, used to order the import run.
+function specifierOf(importLine) {
+	return /from\s*["']([^"']+)["']/.exec(importLine)?.[1] ?? "";
+}
+
 // The text edits (offset-based, for server.mjs to turn into LSP TextEdits) that
 // add `import { name } from "<specifier>"` to the document. Per the requested
 // behavior we always target a *non-targeted* (`@@@` with no format) declaration
 // block: extend an existing import from the same specifier, else add an import
 // line at the top of the first such block, else create a new block at the top of
-// the document. Either way we keep a blank line between the import group and the
-// first non-import statement (and none when there isn't one). Returns [] when the
-// name is already imported from that specifier.
+// the document. Whenever an import is added, the affected group is re-sorted
+// alphabetically — the named bindings within a `{ ... }` group, and the run of
+// import lines (by module specifier). A blank line is kept between the import
+// group and the first non-import statement (and none when there isn't one).
+// Returns [] when the name is already imported from that specifier.
 export function buildImportEdits(text, specifier, name) {
 	const blocks = declarationBlocks(text).filter(b => b.tag === "");
 	const indent = detectIndent(text);
@@ -472,26 +549,49 @@ export function buildImportEdits(text, specifier, name) {
 
 		if (new RegExp(`\\b${escapeRe(name)}\\b`).test(m[1])) return []; // already imported
 
-		// Insert into the existing named group, just after its last binding.
-		const groupStart = m.index + m[0].indexOf("{") + 1;
-		const braceRel = m.index + m[0].indexOf("}");
-		let k = braceRel;
-		while (k > groupStart && /\s/.test(body[k - 1])) k--;
-		const at = block.bodyStart + k;
-		const newText = k > groupStart ? `, ${name}` : `${name} `;
-		// The binding insert and the (offset-disjoint) blank-line separator both land
+		// Rebuild the named group with the new binding, sorted alphabetically, and
+		// replace the whole `{ ... }` span. Replacing the span (rather than inserting)
+		// lets us re-sort any previously out-of-order bindings in the same edit.
+		const bindings = m[1].split(",").map(s => s.trim()).filter(Boolean);
+		bindings.push(name);
+		bindings.sort((a, b) => bindingKey(a).localeCompare(bindingKey(b)));
+		const groupStart = block.bodyStart + m.index + m[0].indexOf("{");
+		const groupEnd = block.bodyStart + m.index + m[0].indexOf("}") + 1;
+		// The group replace and the (offset-disjoint) blank-line separator both land
 		// in this block; return them together.
-		return [{ start: at, end: at, newText }, ...blankLineSeparatorEdits(text, block)];
+		return [
+			{ start: groupStart, end: groupEnd, newText: `{ ${bindings.join(", ")} }` },
+			...blankLineSeparatorEdits(text, block),
+		];
 	}
 
-	// No import from this specifier yet: append one to the first block's import run
-	// (keeping imports grouped), opening a blank line before any following code. A
-	// single edit avoids two inserts colliding at the same offset.
+	// No import from this specifier yet: add a line to the first block's import run
+	// and re-sort the run by specifier, keeping a blank line before any following
+	// code. Replacing the whole run as one edit keeps the sort and the separator
+	// from colliding at a shared offset.
 	const block = blocks[0];
-	const { endOffset, needsBlank } = leadingImportRun(text.slice(block.bodyStart, block.bodyEnd));
-	const at = block.bodyStart + endOffset;
-	const separator = needsBlank ? "\n" : "";
-	return [{ start: at, end: at, newText: `${importLine}\n${separator}` }];
+	const body = text.slice(block.bodyStart, block.bodyEnd);
+	const lines = body.split("\n");
+
+	let runChars = 0;
+	let i = 0;
+	const importLines = [];
+	for (; i < lines.length; i++) {
+		if (!/^[ \t]*import\b/.test(lines[i])) break;
+		importLines.push(lines[i]);
+		runChars += lines[i].length + 1; // include the consumed "\n"
+	}
+	importLines.push(importLine);
+	importLines.sort((a, b) => specifierOf(a).localeCompare(specifierOf(b)));
+
+	const followingIsBlank = lines[i] !== undefined && lines[i].trim() === "";
+	const hasCodeAfter = lines.slice(i).some(l => l.trim() !== "");
+	const needsBlank = hasCodeAfter && !followingIsBlank;
+
+	const start = block.bodyStart;
+	const end = block.bodyStart + runChars; // past the last import line's newline (== start when none)
+	const newText = importLines.join("\n") + "\n" + (needsBlank ? "\n" : "");
+	return [{ start, end, newText }];
 }
 
 // Merge reserved items with the document's defined names, dropping any reserved
@@ -507,12 +607,12 @@ function withDefined(reserved, defined) {
 // specifier is computed relative to the document being edited; without a file
 // path we can't form a resolvable relative import, so no auto-imports are
 // offered.
-function autoImportItems(defined, roots, filePath) {
+function autoImportItems(defined, roots, filePath, excludes) {
 	if (!filePath) return [];
 	const fromDir = dirname(filePath);
 	const seen = new Set();
 	const items = [];
-	for (const exp of collectWorkspaceExports(roots)) {
+	for (const exp of collectWorkspaceExports(roots, excludes)) {
 		if (RESERVED_NAMES.has(exp.label) || defined.has(exp.label)) continue;
 		const specifier = relSpecifier(fromDir, exp.file);
 		const key = `${exp.label}\0${specifier}`;
@@ -528,10 +628,160 @@ function autoImportItems(defined, roots, filePath) {
 	return items;
 }
 
+// --- Go-to-definition -------------------------------------------------------
+
+// Expand to the identifier covering `offset` (a cursor at either edge counts as
+// inside it, matching how an editor resolves a click), or null when none is there.
+function identifierAt(text, offset) {
+	const isPart = c => c !== undefined && /[A-Za-z0-9_$]/.test(c);
+	let start = offset;
+	let end = offset;
+	while (start > 0 && isPart(text[start - 1])) start--;
+	while (end < text.length && isPart(text[end])) end++;
+	if (start === end) return null;
+	return { name: text.slice(start, end), start, end };
+}
+
+// Line/character (0-based, LSP style) of an absolute offset in `text`.
+function offsetToPosition(text, offset) {
+	let line = 0;
+	let lineStart = 0;
+	const limit = Math.min(offset, text.length);
+	for (let i = 0; i < limit; i++) {
+		if (text[i] === "\n") {
+			line++;
+			lineStart = i + 1;
+		}
+	}
+	return { line, character: offset - lineStart };
+}
+
+// An LSP-style { uri, range } spanning the `name` token at `offset` in the file
+// `targetPath` (whose contents are `src`).
+function definitionLocation(targetPath, src, offset, name) {
+	return {
+		uri: pathToFileURL(targetPath).href,
+		range: {
+			start: offsetToPosition(src, offset),
+			end: offsetToPosition(src, offset + name.length),
+		},
+	};
+}
+
+// Offset of the declaration of `name` in JS source `src` — a function/const/let/
+// var/class declaration — or -1 when `name` isn't declared there. The same shapes
+// extractExports recognizes, located rather than just named.
+function declarationOffset(src, name) {
+	const n = escapeRe(name);
+	const decls = [
+		new RegExp(`(?:^|[\\s;}])(?:export\\s+)?(?:async\\s+)?function\\s*\\*?\\s*(${n})\\b`),
+		new RegExp(`(?:^|[\\s;}])(?:export\\s+)?(?:const|let|var)\\s+(${n})\\b`),
+		new RegExp(`(?:^|[\\s;}])(?:export\\s+)?class\\s+(${n})\\b`),
+	];
+	for (const re of decls) {
+		const m = re.exec(src);
+		if (m) return m.index + m[0].lastIndexOf(name);
+	}
+	return -1;
+}
+
+// The import that binds `local` somewhere in the document's declaration blocks,
+// as { specifier, imported, nameOffset }, or null when `local` isn't imported.
+// `nameOffset` (the absolute offset of the local binding token) lets a jump fall
+// back to the import line when the source module can't be resolved.
+function importBinding(text, local) {
+	for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
+		const body = text.slice(bodyStart, bodyEnd);
+		for (const m of body.matchAll(IMPORT_STMT)) {
+			for (const b of parseImportClause(m[1])) {
+				if (b.local !== local) continue;
+				const clauseStart = bodyStart + m.index + /^import\s+/.exec(m[0])[0].length;
+				const rel = m[1].lastIndexOf(local);
+				return {
+					specifier: m[2],
+					imported: b.imported,
+					nameOffset: rel >= 0 ? clauseStart + rel : bodyStart + m.index,
+				};
+			}
+		}
+	}
+	return null;
+}
+
+// The vendored stdlib.js, read lazily and cached, alongside its path. The module
+// sits next to this one (build-and-install.sh keeps the copy fresh).
+let stdlibFile;
+function stdlibSource() {
+	if (stdlibFile === undefined) {
+		try {
+			const path = fileURLToPath(new URL("./stdlib.js", import.meta.url));
+			stdlibFile = { path, src: readFileSync(path, "utf8") };
+		} catch {
+			stdlibFile = null;
+		}
+	}
+	return stdlibFile;
+}
+
+// Definition location of a reserved name inside the vendored stdlib.js: a method
+// shorthand (`heading(body) { ... }`) for functions, a property (`$: "$"`) for
+// constants. Returns null for non-reserved names or when stdlib.js can't be read.
+function stdlibDefinition(name) {
+	if (!reservedFunctions.has(name) && !reservedConstants.has(name)) return null;
+	const s = stdlibSource();
+	if (!s) return null;
+	const n = escapeRe(name);
+	const re = reservedConstants.has(name)
+		? new RegExp(`(?:^|[\\s{,])(${n})\\s*:`, "m")
+		: new RegExp(`(?:^|[\\s{,])(${n})\\s*\\(`, "m");
+	const m = re.exec(s.src);
+	if (!m) return null;
+	return definitionLocation(s.path, s.src, m.index + m[0].lastIndexOf(name), name);
+}
+
+// Resolve the identifier under `offset` to its definition, as an LSP-style
+// { uri, range }, or null. Resolution mirrors how names bind at compile time:
+// a declaration-block function/const/etc. in the document wins, then an imported
+// name (jumping to the source module's export, or the import line when the module
+// can't be read), then a reserved stdlib name (jumping to the vendored stdlib.js).
+export function resolveDefinition(text, offset, filePath = null) {
+	const id = identifierAt(text, offset);
+	if (!id) return null;
+	const { name } = id;
+
+	// 1) Declared in one of the document's own declaration blocks.
+	if (filePath) {
+		for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
+			const rel = declarationOffset(text.slice(bodyStart, bodyEnd), name);
+			if (rel >= 0) return definitionLocation(filePath, text, bodyStart + rel, name);
+		}
+	}
+
+	// 2) Imported -> the source module's export, else the import binding itself.
+	const binding = importBinding(text, name);
+	if (binding) {
+		const sourceName = binding.imported && binding.imported !== "default" ? binding.imported : name;
+		const candidate = importCandidate(binding.specifier, filePath);
+		if (candidate) {
+			try {
+				const src = readFileSync(candidate, "utf8");
+				const rel = declarationOffset(src, sourceName);
+				if (rel >= 0) return definitionLocation(candidate, src, rel, sourceName);
+			} catch {
+				// Unresolvable/unreadable module: fall through to the import line.
+			}
+		}
+		return filePath ? definitionLocation(filePath, text, binding.nameOffset, name) : null;
+	}
+
+	// 3) A reserved stdlib name.
+	return stdlibDefinition(name);
+}
+
 // Returns neutral completion items for the cursor at `offset`, or [] when the
 // cursor isn't in a completion context. Auto-import items carry an `autoImport`
 // field; the rest are plain { label, kind, detail }.
-export function collectCompletions(text, offset, { filePath = null, roots = [] } = {}) {
+export function collectCompletions(text, offset, { filePath = null, roots = [], excludes = [] } = {}) {
 	const defined = definedNames(text, filePath);
 
 	let items;
@@ -543,5 +793,5 @@ export function collectCompletions(text, offset, { filePath = null, roots = [] }
 		return [];
 	}
 
-	return items.concat(autoImportItems(defined, roots, filePath));
+	return items.concat(autoImportItems(defined, roots, filePath, excludes));
 }
