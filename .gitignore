@@ -5,5 +5,9 @@ vscode-extension/.vscodeignore
 # Vendored by build-and-install.sh from the repo root; not source of truth.
 vscode-extension/server/spruce.js
 vscode-extension/server/stdlib.js
+vscode-extension/LICENSE
 vscode-extension/*.vsix
+
+# esbuild bundle output
+vscode-extension/dist/
 /node_modules

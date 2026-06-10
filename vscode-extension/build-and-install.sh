@@ -12,6 +12,12 @@ VSIX="spruce-language.vsix"
 echo "==> Vendoring grammar sources into server/"
 cp ../spruce.js ../stdlib.js server/
 
+echo "==> Vendoring LICENSE from repo root"
+cp ../LICENSE LICENSE
+
+echo "==> Bundling client + server into dist/"
+node esbuild.mjs
+
 echo "==> Packaging extension -> $VSIX"
 vsce package --allow-missing-repository --out "$VSIX"
 

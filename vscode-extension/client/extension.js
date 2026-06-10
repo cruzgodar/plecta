@@ -4,7 +4,7 @@ const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
 let client;
 
 function activate(context) {
-	const serverModule = context.asAbsolutePath(path.join("server", "server.mjs"));
+	const serverModule = context.asAbsolutePath(path.join("dist", "server.mjs"));
 
 	const serverOptions = {
 		run: { module: serverModule, transport: TransportKind.ipc },

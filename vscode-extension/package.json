@@ -4,19 +4,21 @@
   "description": "Syntax highlighting for the Spruce markup language via LSP semantic tokens",
   "version": "0.0.1",
   "publisher": "cruzgodar",
-  "exports": {
-    ".": "./spruce.js"
-  },
   "engines": {
     "vscode": "^1.75.0"
   },
-  "main": "./client/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "spruce",
-        "aliases": ["Spruce", "spruce"],
-        "extensions": [".sp"],
+        "aliases": [
+          "Spruce",
+          "spruce"
+        ],
+        "extensions": [
+          ".sp"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -34,55 +36,158 @@
       {
         "scopeName": "spruce.embedded.js.injection",
         "path": "./syntaxes/spruce-js.injection.tmLanguage.json",
-        "injectTo": ["source.spruce"]
+        "injectTo": [
+          "source.spruce"
+        ]
       }
     ],
     "semanticTokenTypes": [
-      { "id": "heading", "description": "Markdown-style heading line" },
-      { "id": "bold", "description": "Bold span content" },
-      { "id": "italic", "description": "Italic span content" },
-      { "id": "boldItalic", "description": "Bold + italic span content" },
-      { "id": "inlineCode", "description": "Inline `code` content" },
-      { "id": "codeBlock", "description": "Fenced code block content" },
-      { "id": "list", "description": "List marker (- or 1.)" },
-      { "id": "spruceFunction", "description": "@function call marker and name" },
-      { "id": "undefinedFunction", "description": "@function call name that resolves to nothing in scope" },
-      { "id": "undefinedFunctionMarker", "description": "@ and parentheses of an undefined @function call (purple, non-bold)" },
-      { "id": "escape", "description": "Escape sequence (@ plus the escaped character)" },
-      { "id": "invalid", "description": "Invalid @ that is not a valid function call" },
-      { "id": "linkText", "description": "Link display text inside [ ]" },
-      { "id": "marker", "description": "Inline syntax delimiter (asterisks, underscores)" },
-      { "id": "languageTag", "description": "Language identifier after a ``` fence" },
-      { "id": "bracket1", "description": "Bracket pair color 1 (sequential)" },
-      { "id": "bracket2", "description": "Bracket pair color 2 (sequential)" },
-      { "id": "bracket3", "description": "Bracket pair color 3 (sequential)" },
-      { "id": "property", "description": "JSON property key inside a ( ) block" },
-      { "id": "jsonString", "description": "JSON string value inside a ( ) block" },
-      { "id": "number", "description": "JSON number inside a ( ) block" },
-      { "id": "boolean", "description": "JSON true/false/null inside a ( ) block" },
-      { "id": "comment", "description": "JSON5 comment inside a ( ) block" }
+      {
+        "id": "heading",
+        "description": "Markdown-style heading line"
+      },
+      {
+        "id": "bold",
+        "description": "Bold span content"
+      },
+      {
+        "id": "italic",
+        "description": "Italic span content"
+      },
+      {
+        "id": "boldItalic",
+        "description": "Bold + italic span content"
+      },
+      {
+        "id": "inlineCode",
+        "description": "Inline `code` content"
+      },
+      {
+        "id": "codeBlock",
+        "description": "Fenced code block content"
+      },
+      {
+        "id": "list",
+        "description": "List marker (- or 1.)"
+      },
+      {
+        "id": "spruceFunction",
+        "description": "@function call marker and name"
+      },
+      {
+        "id": "undefinedFunction",
+        "description": "@function call name that resolves to nothing in scope"
+      },
+      {
+        "id": "undefinedFunctionMarker",
+        "description": "@ and parentheses of an undefined @function call (purple, non-bold)"
+      },
+      {
+        "id": "escape",
+        "description": "Escape sequence (@ plus the escaped character)"
+      },
+      {
+        "id": "invalid",
+        "description": "Invalid @ that is not a valid function call"
+      },
+      {
+        "id": "linkText",
+        "description": "Link display text inside [ ]"
+      },
+      {
+        "id": "marker",
+        "description": "Inline syntax delimiter (asterisks, underscores)"
+      },
+      {
+        "id": "languageTag",
+        "description": "Language identifier after a ``` fence"
+      },
+      {
+        "id": "bracket1",
+        "description": "Bracket pair color 1 (sequential)"
+      },
+      {
+        "id": "bracket2",
+        "description": "Bracket pair color 2 (sequential)"
+      },
+      {
+        "id": "bracket3",
+        "description": "Bracket pair color 3 (sequential)"
+      },
+      {
+        "id": "property",
+        "description": "JSON property key inside a ( ) block"
+      },
+      {
+        "id": "jsonString",
+        "description": "JSON string value inside a ( ) block"
+      },
+      {
+        "id": "number",
+        "description": "JSON number inside a ( ) block"
+      },
+      {
+        "id": "boolean",
+        "description": "JSON true/false/null inside a ( ) block"
+      },
+      {
+        "id": "comment",
+        "description": "JSON5 comment inside a ( ) block"
+      }
     ],
     "semanticTokenModifiers": [
-      { "id": "bold", "description": "Bold emphasis, composes with any token type" },
-      { "id": "italic", "description": "Italic emphasis, composes with any token type" }
+      {
+        "id": "bold",
+        "description": "Bold emphasis, composes with any token type"
+      },
+      {
+        "id": "italic",
+        "description": "Italic emphasis, composes with any token type"
+      }
     ],
     "semanticTokenScopes": [
       {
         "language": "spruce",
         "scopes": {
-          "heading": ["markup.heading"],
-          "inlineCode": ["variable"],
-          "codeBlock": ["variable"],
-          "string": ["variable"],
-          "list": ["markup.heading"],
-          "spruceFunction": ["keyword"],
-          "escape": ["constant.character.escape"],
-          "languageTag": ["entity.name.type"],
-          "property": ["support.type.property-name.json"],
-          "jsonString": ["string.quoted.double.json"],
-          "number": ["constant.numeric.json"],
-          "boolean": ["constant.language.json"],
-          "comment": ["comment.line.double-slash.json"]
+          "heading": [
+            "markup.heading"
+          ],
+          "inlineCode": [
+            "variable"
+          ],
+          "codeBlock": [
+            "variable"
+          ],
+          "string": [
+            "variable"
+          ],
+          "list": [
+            "markup.heading"
+          ],
+          "spruceFunction": [
+            "keyword"
+          ],
+          "escape": [
+            "constant.character.escape"
+          ],
+          "languageTag": [
+            "entity.name.type"
+          ],
+          "property": [
+            "support.type.property-name.json"
+          ],
+          "jsonString": [
+            "string.quoted.double.json"
+          ],
+          "number": [
+            "constant.numeric.json"
+          ],
+          "boolean": [
+            "constant.language.json"
+          ],
+          "comment": [
+            "comment.line.double-slash.json"
+          ]
         }
       }
     ],
@@ -90,22 +195,48 @@
       "editor.semanticTokenColorCustomizations": {
         "enabled": true,
         "rules": {
-          "*.bold:spruce": { "bold": true },
-          "*.italic:spruce": { "italic": true },
-          "spruceFunction:spruce": { "foreground": "#AA8BD3", "bold": true },
-          "undefinedFunction:spruce": { "foreground": "#AA8BD3", "bold": false },
-          "undefinedFunctionMarker:spruce": { "foreground": "#AA8BD3", "bold": false },
-          "invalid:spruce": { "foreground": "#F44747" },
-          "linkText:spruce": { "foreground": "#94D893" },
-          "marker:spruce": { "foreground": "#808080BF" },
-          "bracket1:spruce": { "foreground": "#FFD700" },
-          "bracket2:spruce": { "foreground": "#179FFF" },
-          "bracket3:spruce": { "foreground": "#179FFF" }
+          "*.bold:spruce": {
+            "bold": true
+          },
+          "*.italic:spruce": {
+            "italic": true
+          },
+          "spruceFunction:spruce": {
+            "foreground": "#AA8BD3",
+            "bold": true
+          },
+          "undefinedFunction:spruce": {
+            "foreground": "#AA8BD3",
+            "bold": false
+          },
+          "undefinedFunctionMarker:spruce": {
+            "foreground": "#AA8BD3",
+            "bold": false
+          },
+          "invalid:spruce": {
+            "foreground": "#F44747"
+          },
+          "linkText:spruce": {
+            "foreground": "#94D893"
+          },
+          "marker:spruce": {
+            "foreground": "#808080BF"
+          },
+          "bracket1:spruce": {
+            "foreground": "#FFD700"
+          },
+          "bracket2:spruce": {
+            "foreground": "#179FFF"
+          },
+          "bracket3:spruce": {
+            "foreground": "#179FFF"
+          }
         }
       }
     }
   },
   "scripts": {
+    "build": "node esbuild.mjs",
     "test": "node --test server/*.test.mjs"
   },
   "dependencies": {
@@ -114,5 +245,8 @@
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.11"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
   }
 }
