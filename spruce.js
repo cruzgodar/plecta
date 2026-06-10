@@ -32,6 +32,13 @@ const HOOK_OVERRIDES_KEY = "__spruceHookOverrides";
 // than hardcode a fixed ceiling, we scan each input for the deepest hash run that
 // actually appears (see maxHashDepth) and generate exactly that many alternatives
 // on demand, longest-first so the greedy match wins.
+//
+// jsonBlock (the `(...)` argument form) additionally forbids a leading `@`: prose
+// desugars to wrapped calls like `(@text[...])`, so a bare call followed by prose
+// (`@foo bar` -> `@foo(@text[ bar])`) would otherwise swallow that wrapper as a
+// JSON argument and feed the prose to JSON5.parse. A genuine JSON value never
+// starts with `@`, so the `~"@"` lookahead only rejects those prose wrappers;
+// mid-string interpolation (`{"who": "@who"}`) is unaffected since it starts with `{`.
 function blockRules(maxHashes)
 {
 	const parsed = [];
@@ -45,13 +52,13 @@ function blockRules(maxHashes)
 		parsed.push(`"${h}[[" (~"]]${h}" any)* "]]${h}"`);
 		inline.push(`"${h}[" inlineWithoutEscapable<~"]${h}" any>+ "]${h}"`);
 		raw.push(`"${h}{" (functionCall | (~"}${h}" any))+ "}${h}"`);
-		json.push(`"${h}(" (functionCall | (~")${h}" any))+ ")${h}"`);
+		json.push(`"${h}(" ~"@" (functionCall | (~")${h}" any))+ ")${h}"`);
 	}
 
 	parsed.push(`"[[" (~"]]" any)* "]]"`);
 	inline.push(`"[" inlineWithoutEscapable<~"]" any>* "]"`);
 	raw.push(`"{" (functionCall | (~"}" any))* "}"`);
-	json.push(`"(" (functionCall | (~")" any))* ")"`);
+	json.push(`"(" ~"@" (functionCall | (~")" any))* ")"`);
 
 	const join = alts => alts.join("\n\t| ");
 

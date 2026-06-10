@@ -245,6 +245,18 @@ test("call: multiple parsed-block args", async () =>
 	assert.equal(await compile(lib + "@join[a][b][c]", "html"), NL + "a,b,c");
 });
 
+test("call: bare call followed by prose does not swallow the @text wrapper as JSON", async () =>
+{
+	// Prose desugars to (@text[...]); a bare call followed by prose becomes
+	// `@join[a][b](@text[ then more])`. The trailing (@text[...]) must not be read
+	// as a jsonBlock argument (which would feed " then more" to JSON5.parse and
+	// throw). A jsonBlock forbids a leading @, so the wrapper stays prose.
+	assert.equal(
+		await compile(lib + "@join[a][b] then more", "html"),
+		NL + "<p>a,b then more</p>",
+	);
+});
+
 test("call: nested calls regression - inner result reaches outer arg", async () =>
 {
 	assert.equal(await compile(lib + "(@up [(@up [hi])])", "html"), NL + "HI");
