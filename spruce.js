@@ -191,7 +191,13 @@ spruce {
     | link
     | functionCall
     | (~boldItalic ~bold ~italic ~code ~math ~inlineDisplayMath ~link ~functionCall ~"[" ~"]" allowed)+ --text
- 
+
+  // Start rule for re-matching a parsedInlineBlock body in isolation (see the
+  // parsedInlineBlock desugar handler): the whitespace-trimmed body string is
+  // re-parsed as inline content so its desugaring matches what the block would
+  // have produced, minus the trimmed leading/trailing whitespace.
+  inlineContent = inlineWithoutEscapable<~end any>*
+
 
   // The raw content of code blocks, display math, etc.
   raw<allowed> = rawBlockEscapable | functionCall | allowed
@@ -295,9 +301,25 @@ let declarationBlockOriginalLines = [];
 // so runtime errors point at the real source line.
 let desugarLineBase = 1;
 
+// When false (the default), the body of a parsed block ([ ] or [[ ]]) is trimmed
+// of leading/trailing whitespace before it's handed to the function, so the call
+// receives just the middle. The CLI's -w/--preserve-whitespace flag sets this
+// true to keep the raw, untrimmed body. Set per compile by _compileImpl.
+let preserveWhitespace = false;
+
 function globalizeLineNum(localLineNum)
 {
 	return desugarLineBase + localLineNum - 1;
+}
+
+// Count the newlines in the leading-whitespace run of `str` (whatever
+// String.prototype.trimStart would strip). Used to advance desugarLineBase past
+// the whitespace a parsed block trims, so nested captures still globalize onto
+// the original source line where the trimmed content actually begins.
+function leadingTrimNewlines(str)
+{
+	const leading = str.slice(0, str.length - str.trimStart().length);
+	return (leading.match(/\r\n|\r|\n/g) || []).length;
 }
 
 function captureFunctionCall(node)
@@ -486,7 +508,12 @@ const desugarOperation = {
 
 	parsedBlock(start, body, end)
 	{
-		const inner = spruce.match(body.sourceString, "document");
+		// By default the body is trimmed so the function receives just the middle;
+		// -w/--preserve-whitespace keeps it raw. The trimming happens here, on the
+		// string re-matched as a document, so getCode (which walks the desugared
+		// output) sees the already-trimmed content without extra bookkeeping.
+		const bodyStr = preserveWhitespace ? body.sourceString : body.sourceString.trim();
+		const inner = spruce.match(bodyStr, "document");
 
 		if (inner.failed())
 		{
@@ -496,8 +523,11 @@ const desugarOperation = {
 		// Shift the line base so nested captures globalize correctly: the re-match's
 		// line 1 corresponds to the original-source line where this body begins.
 		// Mirrors getCode's getCodeOffset bookkeeping, but line-based. Restore after.
+		// Trimming drops leading whitespace, so advance past any newlines it removed
+		// to keep the base on the line the trimmed content really starts on.
 		const savedBase = desugarLineBase;
-		desugarLineBase = globalizeLineNum(body.source.getLineAndColumn().lineNum);
+		const skippedLines = preserveWhitespace ? 0 : leadingTrimNewlines(body.sourceString);
+		desugarLineBase = globalizeLineNum(body.source.getLineAndColumn().lineNum + skippedLines);
 		const innerDesugared = semantics(inner).desugar();
 		desugarLineBase = savedBase;
 
@@ -506,7 +536,30 @@ const desugarOperation = {
 
 	parsedInlineBlock(start, body, end)
 	{
-		return `${start.desugar()}${body.desugar()}${end.desugar()}`;
+		if (preserveWhitespace)
+		{
+			return `${start.desugar()}${body.desugar()}${end.desugar()}`;
+		}
+
+		// Trim the body so the call receives just the middle. The body subtree can't
+		// be desugared in place without re-including its surrounding whitespace (it
+		// lives inside the first/last text run), so re-match the trimmed string as
+		// inline content and desugar that — the inlineContent rule yields the same
+		// desugaring the block body would, minus the trimmed whitespace.
+		const inner = spruce.match(body.sourceString.trim(), "inlineContent");
+
+		if (inner.failed())
+		{
+			throw new Error(inner.message);
+		}
+
+		const savedBase = desugarLineBase;
+		const skippedLines = leadingTrimNewlines(body.sourceString);
+		desugarLineBase = globalizeLineNum(body.source.getLineAndColumn().lineNum + skippedLines);
+		const innerDesugared = semantics(inner).desugar();
+		desugarLineBase = savedBase;
+
+		return `${start.desugar()}${innerDesugared}${end.desugar()}`;
 	},
 
 	rawBlock(start, body, end)
@@ -1034,15 +1087,19 @@ process.on("SIGINT", () => process.exit(130))
 // access. Chaining keeps the public API a plain async function.
 let compileQueue = Promise.resolve();
 
-export function compile(input, outputFormat, filePath = null, raw = false)
+export function compile(input, outputFormat, filePath = null, raw = false, preserveWs = false)
 {
-	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, raw));
+	const next = compileQueue.then(() => _compileImpl(input, outputFormat, filePath, raw, preserveWs));
 	compileQueue = next.catch(() => {});
 	return next;
 }
 
-async function _compileImpl(input, outputFormat, filePath, raw)
+async function _compileImpl(input, outputFormat, filePath, raw, preserveWs)
 {
+	// Trimming of parsed-block bodies is the default; -w/--preserve-whitespace
+	// keeps them raw. Set before any desugaring so the block handlers see it.
+	preserveWhitespace = preserveWs;
+
 	// Snapshot the keys we're about to splat so we can restore on the way out.
 	// Users still override behavior by declaring/importing the name in their
 	// document — that shadows globalThis during the generated module's
@@ -1132,6 +1189,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	const positional = [];
 	let formatOverride = null;
 	let rawMode = false;
+	let preserveWs = false;
 
 	for (let i = 0; i < argv.length; i++)
 	{
@@ -1144,6 +1202,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		{
 			rawMode = true;
 		}
+		else if (arg === "-w" || arg === "--preserve-whitespace")
+		{
+			preserveWs = true;
+		}
 		else
 		{
 			positional.push(arg);
@@ -1154,7 +1216,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 
 	if (!inputPath || !outputPath)
 	{
-		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--raw]\n");
+		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--raw] [-w|--preserve-whitespace]\n");
 		process.exit(1);
 	}
 
@@ -1166,7 +1228,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		// Pass the absolute input path so post-compile hooks (e.g. `document`) get a
 		// stable, fully-qualified path rather than whatever relative form the CLI
 		// was invoked with.
-		const result = await compile(input, outputFormat, resolvePath(inputPath), rawMode);
+		const result = await compile(input, outputFormat, resolvePath(inputPath), rawMode, preserveWs);
 		await writeFile(outputPath, result);
 	}
 	catch (ex)

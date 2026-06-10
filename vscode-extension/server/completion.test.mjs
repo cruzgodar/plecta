@@ -163,6 +163,37 @@ test("unusedImportRanges leaves an @-call-used import alone", () => {
 	assert.deepEqual(unusedImportRanges(doc), []);
 });
 
+test("unusedImportRanges ignores the binding name appearing as prose/parsed-block text", () => {
+	// `debug` shows up as ordinary text inside the parsed block (a /debug/ URL), but
+	// there's no `@debug` call, so the import is unused despite the textual matches.
+	const doc = [
+		'@@@',
+		'import { debug } from "./x.js";',
+		'@@@',
+		'',
+		'@other[[',
+		'\t<a href="/debug/htmdl-docs">HTMDL Documentation</a>',
+		'\t<a href="/debug/glsl-docs">GLSL Docs</a>',
+		']]',
+	].join("\n");
+	const ranges = unusedImportRanges(doc);
+	assert.equal(ranges.length, 1);
+	assert.equal(doc.slice(ranges[0].start, ranges[0].end), 'import { debug } from "./x.js"');
+});
+
+test("unusedImportRanges counts an @-call use even with the name elsewhere as text", () => {
+	const doc = [
+		'@@@',
+		'import { debug } from "./x.js";',
+		'@@@',
+		'',
+		'@debug[[',
+		'\t<a href="/debug/htmdl-docs">HTMDL Documentation</a>',
+		']]',
+	].join("\n");
+	assert.deepEqual(unusedImportRanges(doc), []);
+});
+
 test("unusedImportRanges leaves an import used only in declaration JS alone", () => {
 	const doc = '@@@\nimport { helper } from "./x.js";\nfunction wrap(x) { return helper(x); }\n@@@\n';
 	assert.deepEqual(unusedImportRanges(doc), []);
@@ -180,4 +211,52 @@ test("unusedImportRanges dims an aliased unused binding at its alias", () => {
 	const ranges = unusedImportRanges(doc);
 	assert.equal(ranges.length, 1);
 	assert.equal(doc.slice(ranges[0].start, ranges[0].end), "dead");
+});
+
+// Apply offset-based edits (all pure inserts here) right-to-left so earlier
+// offsets stay valid as we splice.
+function applyEdits(text, edits) {
+	let out = text;
+	for (const e of [...edits].sort((a, b) => b.start - a.start)) {
+		out = out.slice(0, e.start) + e.newText + out.slice(e.end);
+	}
+	return out;
+}
+
+test("buildImportEdits creates a new block with no trailing blank line inside", () => {
+	const doc = "# hi";
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));
+	assert.equal(out, '@@@\n\timport { foo } from "./x.js";\n@@@\n\n# hi');
+});
+
+test("buildImportEdits opens a blank line between a new import and following code", () => {
+	const doc = '@@@\nconst x = 1;\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));
+	assert.equal(out, '@@@\n\timport { foo } from "./x.js";\n\nconst x = 1;\n@@@\n');
+});
+
+test("buildImportEdits keeps the single blank line when one already exists", () => {
+	const doc = '@@@\nimport { a } from "./a.js";\n\nconst x = 1;\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));
+	assert.equal(
+		out,
+		'@@@\nimport { a } from "./a.js";\n\timport { foo } from "./x.js";\n\nconst x = 1;\n@@@\n',
+	);
+});
+
+test("buildImportEdits adds no blank line when the block has no non-import statement", () => {
+	const doc = '@@@\nimport { a } from "./a.js";\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));
+	assert.equal(out, '@@@\nimport { a } from "./a.js";\n\timport { foo } from "./x.js";\n@@@\n');
+});
+
+test("buildImportEdits separates an extended group from following code", () => {
+	const doc = '@@@\nimport { a } from "./x.js";\nconst y = 1;\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));
+	assert.equal(out, '@@@\nimport { a, foo } from "./x.js";\n\nconst y = 1;\n@@@\n');
+});
+
+test("buildImportEdits is a no-op when the name is already imported", () => {
+	const doc = '@@@\nimport { foo } from "./x.js";\n@@@\n';
+	assert.deepEqual(buildImportEdits(doc, "./x.js", "foo"), []);
 });

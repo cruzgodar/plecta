@@ -480,20 +480,21 @@ test("a call name absent from the known-names set is flagged undefinedFunction",
 	const tokens = collectTokens(src, new Set(["heading"]));
 	const name = tokens.find(t => t.type === "undefinedFunction" && src.slice(t.start, t.end) === "nope");
 	assert.ok(name, "name flagged undefined");
-	// The leading @ turns red too (the `invalid` color), not purple.
+	// The leading @ stays purple (non-bold) via undefinedFunctionMarker, not red.
 	const at = tokens.find(t => t.start === 0 && t.end === 1);
-	assert.equal(at.type, "invalid", "the @ is red as well");
+	assert.equal(at.type, "undefinedFunctionMarker", "the @ is the undefined marker color");
 	assert.ok(!tokens.find(t => t.type === "spruceFunction"));
+	assert.ok(!tokens.find(t => t.type === "invalid"), "nothing is flagged invalid/red");
 });
 
-test("a wrapped call to an undefined name paints its parens red too", () => {
+test("a wrapped call to an undefined name paints its parens with the marker color", () => {
 	const src = "(@nope[x])";
 	const tokens = collectTokens(src, new Set(["heading"]));
 	const open = tokens.find(t => t.start === 0 && t.end === 1);
 	const close = tokens.find(t => t.start === src.length - 1 && t.end === src.length);
-	assert.equal(open.type, "invalid", "open paren is red");
-	assert.equal(close.type, "invalid", "close paren is red");
-	// A defined name keeps the parens purple.
+	assert.equal(open.type, "undefinedFunctionMarker", "open paren is the undefined marker color");
+	assert.equal(close.type, "undefinedFunctionMarker", "close paren is the undefined marker color");
+	// A defined name keeps the parens purple (spruceFunction, bold).
 	const ok = collectTokens(src, new Set(["nope"]));
 	assert.equal(ok.find(t => t.start === 0 && t.end === 1).type, "spruceFunction");
 });

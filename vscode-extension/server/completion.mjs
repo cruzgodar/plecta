@@ -182,12 +182,36 @@ export function unusedImportRanges(text) {
 	const stmts = importStatements(text);
 	if (stmts.length === 0) return [];
 
-	// Blank out every import statement so a binding only counts as "used" when it
-	// occurs somewhere other than an import (an @-call or a JS reference).
-	const chars = text.split("");
-	for (const s of stmts) for (let i = s.start; i < s.end; i++) chars[i] = " ";
-	const masked = chars.join("");
-	const isUsed = name => new RegExp(`\\b${escapeRe(name)}\\b`).test(masked);
+	// A binding counts as used in two distinct ways, and we must not conflate them:
+	//   * In declaration-block JS, a bare reference (`name`) is a real use.
+	//   * In the markdown body, only an `@name` call is a use — the bare name
+	//     showing up as ordinary prose or inside a parsed block (e.g. a `/debug/...`
+	//     URL) is NOT a use, and must not keep an unused `debug` import alive.
+	// So we split the text into two corpora (with import statements blanked, so a
+	// binding never counts itself) and search each with the rule that fits it.
+	const declChars = text.split("");
+	const mdChars = text.split("");
+	const inDecl = new Uint8Array(text.length);
+	for (const { bodyStart, bodyEnd } of declarationBlocks(text)) {
+		for (let i = bodyStart; i < bodyEnd && i < text.length; i++) inDecl[i] = 1;
+	}
+	// Each char belongs to exactly one corpus; blank it out of the other so a
+	// declaration name can't bleed into the markdown scan or vice versa.
+	for (let i = 0; i < text.length; i++) {
+		if (inDecl[i]) mdChars[i] = " ";
+		else declChars[i] = " ";
+	}
+	// Blank import statements out of the declaration corpus so a binding only
+	// counts when it's referenced somewhere other than its own import.
+	for (const s of stmts) for (let i = s.start; i < s.end; i++) declChars[i] = " ";
+	const declJs = declChars.join("");
+	const markdown = mdChars.join("");
+
+	// In markdown, require a leading `@` (and reject `@@name`, an escaped @) so only
+	// genuine calls count; in declaration JS, a bare word reference counts.
+	const isUsed = name =>
+		new RegExp(`\\b${escapeRe(name)}\\b`).test(declJs) ||
+		new RegExp(`(?<!@)@[ \\t]*${escapeRe(name)}\\b`).test(markdown);
 
 	const ranges = [];
 	for (const s of stmts) {
@@ -394,12 +418,43 @@ function detectIndent(text) {
 	return m[1][0] === "\t" ? "\t" : m[1];
 }
 
+// Measure the leading run of `import` lines at the top of a declaration-block
+// body (imports are single-line here, matching the rest of this module).
+// `endOffset` is the offset within the body just past the last import line's
+// newline (where a new import is appended and where the import/code boundary
+// sits); `needsBlank` is true when a non-import statement follows that run with
+// no blank line separating it — the gap an added import should open up.
+function leadingImportRun(body) {
+	const lines = body.split("\n");
+	let endOffset = 0;
+	let i = 0;
+	for (; i < lines.length; i++) {
+		if (!/^[ \t]*import\b/.test(lines[i])) break;
+		endOffset += lines[i].length + 1;
+	}
+	const followingIsBlank = lines[i] !== undefined && lines[i].trim() === "";
+	const hasCodeAfter = lines.slice(i).some(l => l.trim() !== "");
+	return { endOffset, needsBlank: hasCodeAfter && !followingIsBlank };
+}
+
+// A blank-line insertion edit (or none) keeping one blank line between `block`'s
+// import run and the first non-import statement after it. No-op when they're
+// already separated or the block has no non-import statement.
+function blankLineSeparatorEdits(text, block) {
+	const { endOffset, needsBlank } = leadingImportRun(text.slice(block.bodyStart, block.bodyEnd));
+	if (!needsBlank) return [];
+	const at = block.bodyStart + endOffset;
+	return [{ start: at, end: at, newText: "\n" }];
+}
+
 // The text edits (offset-based, for server.mjs to turn into LSP TextEdits) that
 // add `import { name } from "<specifier>"` to the document. Per the requested
 // behavior we always target a *non-targeted* (`@@@` with no format) declaration
 // block: extend an existing import from the same specifier, else add an import
 // line at the top of the first such block, else create a new block at the top of
-// the document. Returns [] when the name is already imported from that specifier.
+// the document. Either way we keep a blank line between the import group and the
+// first non-import statement (and none when there isn't one). Returns [] when the
+// name is already imported from that specifier.
 export function buildImportEdits(text, specifier, name) {
 	const blocks = declarationBlocks(text).filter(b => b.tag === "");
 	const indent = detectIndent(text);
@@ -424,11 +479,19 @@ export function buildImportEdits(text, specifier, name) {
 		while (k > groupStart && /\s/.test(body[k - 1])) k--;
 		const at = block.bodyStart + k;
 		const newText = k > groupStart ? `, ${name}` : `${name} `;
-		return [{ start: at, end: at, newText }];
+		// The binding insert and the (offset-disjoint) blank-line separator both land
+		// in this block; return them together.
+		return [{ start: at, end: at, newText }, ...blankLineSeparatorEdits(text, block)];
 	}
 
-	// No import from this specifier yet: add one at the top of the first block.
-	return [{ start: blocks[0].bodyStart, end: blocks[0].bodyStart, newText: `${importLine}\n` }];
+	// No import from this specifier yet: append one to the first block's import run
+	// (keeping imports grouped), opening a blank line before any following code. A
+	// single edit avoids two inserts colliding at the same offset.
+	const block = blocks[0];
+	const { endOffset, needsBlank } = leadingImportRun(text.slice(block.bodyStart, block.bodyEnd));
+	const at = block.bodyStart + endOffset;
+	const separator = needsBlank ? "\n" : "";
+	return [{ start: at, end: at, newText: `${importLine}\n${separator}` }];
 }
 
 // Merge reserved items with the document's defined names, dropping any reserved

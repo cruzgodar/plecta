@@ -255,11 +255,47 @@ test("call: parsed-block body tolerates an indented closing ]]", async () =>
 	// the closing ]]. An html tag (a chunk that stops at the newline) leaves that
 	// whitespace-only tail (no trailing newline) unconsumed, which used to make the
 	// document re-match fail outright, dropping the whole block. A trailing
-	// spaceOrTab* on `document` mops it up.
+	// spaceOrTab* on `document` mops it up. The trailing whitespace is then trimmed
+	// off by default (see the preserve-whitespace tests for the untrimmed form).
 	assert.equal(
 		await compile(lib + "(@id [[<br>\n\t\t]])", "html"),
+		NL + "<br>",
+	);
+});
+
+test("call: inline parsed-block body is trimmed by default", async () =>
+{
+	// Leading/trailing spaces around the [ ] body are dropped so the function
+	// receives just the middle.
+	assert.equal(await compile(lib + "@id[  hello  ]", "html"), NL + "hello");
+});
+
+test("call: parsed-block [[ ]] body is trimmed by default", async () =>
+{
+	// Surrounding newlines/indentation between [[ and the content are stripped.
+	assert.equal(
+		await compile(lib + "(@id [[\n\thello\n]])", "html"),
+		NL + "<p>hello</p>",
+	);
+});
+
+test("call: -w/preserve-whitespace keeps the raw body", async () =>
+{
+	// With the flag set, the inline body keeps its surrounding spaces.
+	assert.equal(
+		await compile(lib + "@id[  hello  ]", "html", null, false, true),
+		NL + "  hello  ",
+	);
+	// And a [[ ]] body keeps its leading/trailing whitespace too.
+	assert.equal(
+		await compile(lib + "(@id [[<br>\n\t\t]])", "html", null, false, true),
 		NL + "<br>\n\t\t",
 	);
+});
+
+test("call: trimming only strips the outer edges, not interior whitespace", async () =>
+{
+	assert.equal(await compile(lib + "@id[ a  b ]", "html"), NL + "a  b");
 });
 
 test("call: sibling parsed-block args keep their own content (no id collision)", async () =>

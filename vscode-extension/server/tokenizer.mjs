@@ -14,6 +14,7 @@ export const TOKEN_TYPES = [
 	"list",
 	"spruceFunction",
 	"undefinedFunction",
+	"undefinedFunctionMarker",
 	"escape",
 	"invalid",
 	"string",
@@ -304,7 +305,8 @@ function scanJsonNumber(text, i, end) {
 }
 
 // True when a call's function name resolves to nothing — used to paint the @
-// (and a wrapped call's parens) red, matching the undefinedFunction name token.
+// (and a wrapped call's parens) with undefinedFunctionMarker, the same purple as
+// a real call but non-bold, matching the undefinedFunction name token.
 // Returns false when detection is off (no known-names set) or there's no name
 // (e.g. a raw @{} call). The name is the identifier right after the @.
 function callNameUndefined(node) {
@@ -429,10 +431,11 @@ const handlers = {
 	// open-paren / @ / body / close-paren correctly.
 	functionCall_wrapped(node, t) {
 		// When the wrapped call's name is undefined, the @ *and* the wrapping parens
-		// turn red (the `invalid` color) instead of purple. The name itself takes
-		// the distinct `undefinedFunction` type so the server raises exactly one
-		// error diagnostic per call (off the name), not one per red token.
-		const callType = callNameUndefined(node) ? "invalid" : "spruceFunction";
+		// take undefinedFunctionMarker — the same purple as a real call, but non-bold.
+		// The name itself takes the distinct `undefinedFunction` type so the server
+		// raises exactly one error diagnostic per call (off the name), not one per
+		// marker token; both render the same color.
+		const callType = callNameUndefined(node) ? "undefinedFunctionMarker" : "spruceFunction";
 		emitBracketed(node, t, () => {
 			const atOffset = node.source.contents.indexOf("@");
 			if (atOffset >= 0) {
@@ -447,9 +450,10 @@ const handlers = {
 		return true;
 	},
 	functionCall_bare(node, t) {
-		// The @ turns red (the `invalid` color) along with the name when the call is
-		// to an undefined name; the name token alone carries `undefinedFunction`.
-		const callType = callNameUndefined(node) ? "invalid" : "spruceFunction";
+		// The @ takes undefinedFunctionMarker (purple, non-bold) along with the name
+		// when the call is to an undefined name; the name token alone carries
+		// `undefinedFunction` so the server raises just one diagnostic per call.
+		const callType = callNameUndefined(node) ? "undefinedFunctionMarker" : "spruceFunction";
 		emit(t, node.source.startIdx, node.source.startIdx + 1, callType);
 		// Reset so the first argument block after the call is yellow (see wrapped).
 		bracketColorCounter = 0;
