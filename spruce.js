@@ -1122,6 +1122,11 @@ ${captureOverrides}`;
 	// document's own directory — the intuitive, location-stable choice.
 	const path = join(baseDir, `.__fragments_${randomUUID()}.mjs`);
 
+	// Track the path *before* writing so that even a partial write (e.g. the file
+	// is created and then writeFile fails mid-stream on ENOSPC/EIO) is still owned
+	// by the cleanup machinery rather than orphaned on disk.
+	pendingCleanup.add(path);
+
 	// The fragment can't be written if baseDir doesn't exist or isn't writable —
 	// most commonly because compile() was handed a filePath in a directory that
 	// isn't there. Surface that as a clear message instead of letting the raw
@@ -1133,25 +1138,20 @@ ${captureOverrides}`;
 
 	catch(ex)
 	{
+		await removeFragment(path);
 		throw new Error(`Couldn't write the compiled output to ${baseDir}${filePath ? ` (the directory of filePath "${filePath}")` : ""}: ${ex.message}`);
 	}
-
-	pendingCleanup.add(path);
 
 	const moduleUrl = pathToFileURL(path);
 
 	try
 	{
 		const module = await import(moduleUrl.href);
-		await unlink(path).catch(() => {});
-		pendingCleanup.delete(path);
 		return module.__spruceOutput;
 	}
 
 	catch(ex)
 	{
-		await unlink(path).catch(() => {});
-		pendingCleanup.delete(path);
 		const rendered = logSourceError(ex, body, source, functionCallLocations, declarationBlockRanges, storageName);
 		const error = new Error(`${ex}`);
 		// Tell the CLI whether renderContext already printed the offending line, so
@@ -1159,8 +1159,37 @@ ${captureOverrides}`;
 		error.spruceContextRendered = rendered;
 		throw error;
 	}
+
+	// Runs on both the success and failure paths; a throw above still cleans up.
+	finally
+	{
+		await removeFragment(path);
+	}
 }
 
+// Delete a fragment and stop tracking it — but only once it is provably gone.
+// If unlink fails for any reason other than "already absent", the file is left
+// in pendingCleanup so the synchronous exit handler gets a second chance at it.
+async function removeFragment(path)
+{
+	try
+	{
+		await unlink(path);
+		pendingCleanup.delete(path);
+	}
+
+	catch(ex)
+	{
+		// ENOENT means the file isn't there (never written, or already removed),
+		// so there's nothing left to leak — drop it from tracking. Any other error
+		// (EBUSY, EPERM, ...) is transient/recoverable, so keep tracking it.
+		if (ex.code === "ENOENT") pendingCleanup.delete(path);
+	}
+}
+
+// Last-resort synchronous sweep. Runs on normal exit and on every signal we
+// translate into an exit below, so anything still tracked (a fragment whose
+// async unlink failed, or one in flight when a signal arrived) gets removed.
 process.on("exit", () =>
 {
 	for (const path of pendingCleanup)
@@ -1169,7 +1198,12 @@ process.on("exit", () =>
 	}
 });
 
-process.on("SIGINT", () => process.exit(130))
+// Signals bypass the normal 'exit' flow, so re-raise them as an explicit
+// process.exit() to guarantee the sweep above runs before we terminate.
+// Conventional 128+signo exit codes: SIGINT=130, SIGTERM=143, SIGHUP=129.
+process.on("SIGINT", () => process.exit(130));
+process.on("SIGTERM", () => process.exit(143));
+process.on("SIGHUP", () => process.exit(129));
 
 
 
