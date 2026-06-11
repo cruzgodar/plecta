@@ -235,6 +235,27 @@ test("call: raw passes content through verbatim", async () =>
 	assert.equal(await compile("@{stuff}", "html"), "stuff");
 });
 
+test("call: @[...] is the identity on inline content", async () =>
+{
+	// Renders its content with no surrounding brackets, parsing inline sugar.
+	assert.equal(await compile("@[hello *world*]", "html"), "hello <em>world</em>");
+	// Works anywhere a call does — e.g. mid-paragraph.
+	assert.equal(await compile("a @[*b*] c", "html"), "<p>a <em>b</em> c</p>");
+	// Nested calls inside still run.
+	assert.equal(await compile(lib + "@[@up[hi]]", "html"), NL + "HI");
+});
+
+test("call: @[[...]] is the identity on a parsed block", async () =>
+{
+	// Its content is parsed as a whole document, so prose becomes a paragraph.
+	assert.equal(await compile("@[[hello *world*]]", "html"), "<p>hello <em>world</em></p>");
+	// Block-level sugar (headings, etc.) is recognized inside.
+	assert.equal(
+		await compile("@[[# Title\n\nbody]]", "html"),
+		"<h1>Title</h1>\n\n<p>body</p>",
+	);
+});
+
 test("call: escaped @ becomes literal @", async () =>
 {
 	assert.equal(await compile("@@", "html"), "@");
@@ -492,8 +513,13 @@ test("escape: @ escapes @", async () => assert.equal(await compile("@@", "html")
 test("escape: @ escapes *", async () => assert.equal(await compile("@*", "html"), "*"));
 test("escape: @ escapes _", async () => assert.equal(await compile("@_", "html"), "_"));
 test("escape: @ escapes backtick", async () => assert.equal(await compile("@`", "html"), "`"));
-test("escape: @ escapes [", async () => assert.equal(await compile("@[", "html"), "["));
-test("escape: @ escapes ]", async () => assert.equal(await compile("@]", "html"), "]"));
+test("escape: @{[} escapes [ via raw mode", async () => assert.equal(await compile("@{[}", "html"), "["));
+test("escape: @{]} escapes ] via raw mode", async () => assert.equal(await compile("@{]}", "html"), "]"));
+// @[ is no longer a bracket escape (it opens an inline identity block); a stray,
+// unclosed @[ still falls back to a literal [ so old documents don't break hard.
+test("escape: a stray unclosed @[ falls back to a literal [", async () =>
+	assert.equal(await compile("@[", "html"), "["));
+test("escape: @] still yields a literal ]", async () => assert.equal(await compile("@]", "html"), "]"));
 test("escape: @ escapes <", async () => assert.equal(await compile("@<", "html"), "<"));
 
 test("escape: @$ yields a literal $ via the stdlib special-case", async () =>

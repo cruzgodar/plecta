@@ -192,6 +192,24 @@ test("raw block content is string, with function-call gaps preserved", () => {
 	}
 });
 
+test("@[...] identity block colors the @ as a function and recurses into the body", () => {
+	const src = "@[hi *x*]";
+	const tokens = collectTokens(src);
+	const at = tokens.find(t => t.start === 0 && t.end === 1);
+	assert.equal(at.type, "spruceFunction", "the @ is a function marker");
+	// The body recurses, so the inner emphasis still highlights.
+	assert.ok(tokens.find(t => t.type === "italic"), "inline sugar inside the block highlights");
+});
+
+test("@[[...]] identity block colors the @ and re-parses its body as a document", () => {
+	const src = "@[[# Title]]";
+	const tokens = collectTokens(src);
+	const at = tokens.find(t => t.start === 0 && t.end === 1);
+	assert.equal(at.type, "spruceFunction", "the @ is a function marker");
+	// The body is a parsed sub-document, so the heading inside highlights.
+	assert.ok(tokens.find(t => t.type === "heading"), "block sugar inside the block highlights");
+});
+
 test("parsed block inside a raw block keeps its body parsed, not raw", () => {
 	// @{ before @f[[ hello *world* ]] after } — the [[ ]] argument is a parsed
 	// sub-document, so its plain text " hello " must NOT take the raw string color,
@@ -269,6 +287,49 @@ test("json block: @-call inside a string value does not derail the scan", () => 
 		tokens.find(t => t.start === closeBrace && t.type.startsWith("bracket")),
 		"the closing brace is a bracket token (scan recovered after the string)",
 	);
+	// The string token is split around the @-call span, so no jsonString token
+	// overlaps the function tokens.
+	const jsonToks = tokens.filter(t => ["property", "jsonString", "number", "boolean"].includes(t.type));
+	const fns = tokens.filter(t => t.type === "spruceFunction");
+	for (const s of jsonToks) for (const fn of fns) {
+		assert.ok(!(s.start < fn.end && fn.start < s.end), "no JSON token overlaps a function token");
+	}
+});
+
+test("json block: @[...] / @[[...]] identity calls highlight as values without overlap", () => {
+	for (const call of ["@[hi]", "@[[hi]]"]) {
+		const src = `@f([1, ${call}])`;
+		const tokens = collectTokens(src);
+		const at = tokens.find(t => t.start === src.indexOf("@", 1));
+		assert.equal(at?.type, "spruceFunction", `${call}: the @ is a function marker`);
+		const jsonToks = tokens.filter(t => ["property", "jsonString", "number", "boolean"].includes(t.type));
+		const fns = tokens.filter(t => t.type === "spruceFunction");
+		for (const s of jsonToks) for (const fn of fns) {
+			assert.ok(!(s.start < fn.end && fn.start < s.end), `${call}: no JSON token overlaps a function token`);
+		}
+	}
+});
+
+test("json block: @[...] / @[[...]] inside a string value split the string, no overlap", () => {
+	for (const call of ["@[hi]", "@[[hi]]"]) {
+		const src = `@f({"k": "pre ${call} post"})`;
+		const tokens = collectTokens(src);
+		// The @ inside the string still gets function coloring.
+		assert.ok(
+			tokens.find(t => t.type === "spruceFunction" && t.start === src.indexOf("@", 1)),
+			`${call}: the nested @ keeps function coloring inside the string`,
+		);
+		// The surrounding string text stays jsonString, split around the call.
+		const strings = tokens.filter(t => t.type === "jsonString").map(t => src.slice(t.start, t.end));
+		assert.ok(strings.some(s => s.includes("pre")) && strings.some(s => s.includes("post")),
+			`${call}: the string text on both sides stays a jsonString`);
+		// No jsonString token overlaps the call's function tokens.
+		const jsonToks = tokens.filter(t => ["property", "jsonString", "number", "boolean"].includes(t.type));
+		const fns = tokens.filter(t => t.type === "spruceFunction");
+		for (const s of jsonToks) for (const fn of fns) {
+			assert.ok(!(s.start < fn.end && fn.start < s.end), `${call}: no JSON token overlaps a function token`);
+		}
+	}
 });
 
 test("json5 block: bare identifier keys highlight as properties", () => {

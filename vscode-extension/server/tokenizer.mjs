@@ -153,11 +153,20 @@ function fillOutsideCalls(t, a, b, fillType, callSpans) {
 // scan skips over, so e.g. an @-call inside a string value doesn't derail it.
 function emitJsonBody(t, bodyNode, start, end, baseColor) {
 	const text = bodyNode.source.sourceString;
-	const calls = [];
-	bodyNode.collect(calls);
-	calls.sort((a, b) => a.start - b.start);
-	scanJson(t, text, start, end, calls, baseColor);
-	for (const tok of calls) t.push(tok);
+	// The tokens nested @-calls emit (the @, name, brackets, recursed content) —
+	// pushed as-is so each call keeps its own coloring.
+	const callTokens = [];
+	bodyNode.collect(callTokens);
+	// The *whole-call* spans (each call as one opaque region, gaps included) — what
+	// the JSON scan skips over. Distinct from callTokens: a call like @[hi] emits
+	// tokens only for @ [ ], leaving "hi" un-tokenized, but the scan must still treat
+	// the entire @[hi] as one unit so a string/comment fill doesn't paint into it and
+	// its inner text isn't mis-scanned as JSON. Mirrors emitRawBody's approach.
+	const callSpans = [];
+	collectCallSpans(bodyNode, callSpans);
+	callSpans.sort((a, b) => a.start - b.start);
+	scanJson(t, text, start, end, callSpans, baseColor);
+	for (const tok of callTokens) t.push(tok);
 }
 
 // The nested @-call span covering offset `i`, if any (so the JSON scan can skip
@@ -187,7 +196,9 @@ function scanJson(t, text, start, end, calls, baseColor) {
 			const strEnd = scanJsonString(text, i, end, calls, c);
 			// A string is a property key iff the next significant char is a colon.
 			const isKey = nextSignificant(text, strEnd, end, calls) === ":";
-			emit(t, i, Math.min(strEnd, end), isKey ? "property" : "jsonString");
+			// Paint the string around any nested @-call span (like comments do) so the
+			// string token never overlaps the call's own function tokens.
+			fillOutsideCalls(t, i, Math.min(strEnd, end), isKey ? "property" : "jsonString", calls);
 			i = strEnd;
 		} else if (c === "/" && (text[i + 1] === "/" || text[i + 1] === "*")) {
 			// JSON5 line (`//`) and block (`/* */`) comments. Painted around any
@@ -463,6 +474,21 @@ const handlers = {
 	functionCall_raw(node, t) {
 		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 		// Reset so the first argument block after the call is yellow (see wrapped).
+		bracketColorCounter = 0;
+		for (const c of node.children) c.collect(t);
+		return true;
+	},
+	// @[[...]] / @[...] — identity calls on a parsed / inline block. Colored like
+	// @{...}: the @ is the function marker and the block (the lone "argument")
+	// recurses, so its delimiters and content highlight normally.
+	functionCall_parsed(node, t) {
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
+		bracketColorCounter = 0;
+		for (const c of node.children) c.collect(t);
+		return true;
+	},
+	functionCall_inline(node, t) {
+		emit(t, node.source.startIdx, node.source.startIdx + 1, "spruceFunction");
 		bracketColorCounter = 0;
 		for (const c of node.children) c.collect(t);
 		return true;

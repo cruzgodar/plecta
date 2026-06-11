@@ -183,9 +183,11 @@ spruce {
   // A run of text desugars to (@text[...]) and is later re-parsed, so literal
   // [ ] in prose would collide with that argument's own delimiters (or, for a
   // leading [, form a spurious [[ block opener). The text rule excludes [ ] so
-  // they fall through to parsedBlockEscapable here, which desugars them to @[/@]
-  // — a desugaring action rather than a string rewrite. inlineWithoutEscapable
-  // comes first so link (which also opens with [) still wins over the escape.
+  // they fall through to parsedBlockEscapable here, which desugars them to the
+  // raw escapes @{[}/@{]} — a desugaring action rather than a string rewrite.
+  // (Raw mode, not @[/@], because @[ now opens an inline identity block.)
+  // inlineWithoutEscapable comes first so link (which also opens with [) still
+  // wins over the escape.
   inline<allowed> = inlineWithoutEscapable<allowed> | parsedBlockEscapable
 
   inlineWithoutEscapable<allowed>
@@ -218,9 +220,19 @@ spruce {
 
   functionCallChunk = spaceOrTab* functionCall spaceOrTab* (newline | end)
   
+  // @[[...]] and @[...] are the identity functions on a parsed block and an
+  // inline block respectively: they emit their content unchanged, just like
+  // @{...} does for raw content. --parsed comes before --inline so @[[ opens a
+  // parsed block rather than an inline block holding a stray [, and both precede
+  // --escaped so a well-formed @[/@[[ always opens a block. @[ is no longer a
+  // literal-bracket escape; emit a literal [ with the raw escape @{[}. (--escaped
+  // still matches a stray, unclosed @[ as a fallback, but its desugar rewrites
+  // that to @{[} — see functionCall_escaped — so it can't re-open a block.)
   functionCall
     = "(" spaceOrTab* "@" space* jsIdentifier spacePaddedBlock* space* ")" --wrapped
     | "@" spaceOrTab* jsIdentifier spaceOrTabPaddedBlock*                  --bare
+    | "@" spaceOrTab* parsedBlock                                          --parsed
+    | "@" spaceOrTab* parsedInlineBlock                                    --inline
     | "@" spaceOrTab* rawBlock                                             --raw
     | "@" (~space any)                                                     --escaped
     | "@" space                                                            --invalid
@@ -525,6 +537,20 @@ const desugarOperation = {
 		return `@${name.desugar()}${spaceOrTabPaddedBlocks.desugar()}`;
 	},
 
+	// @[[...]] / @[...] / @{...}: identity functions on a parsed, inline, or raw
+	// block. The block desugars itself (recursing into nested calls/escapes) and we
+	// re-emit it behind the @ so the re-parse recognizes the same identity call —
+	// no captureFunctionCall, since these emit their content without a runtime call.
+	functionCall_parsed(_1, _2, block)
+	{
+		return `@${block.desugar()}`;
+	},
+
+	functionCall_inline(_1, _2, block)
+	{
+		return `@${block.desugar()}`;
+	},
+
 	functionCall_raw(_1, _2, block)
 	{
 		return `@${block.desugar()}`;
@@ -532,6 +558,15 @@ const desugarOperation = {
 
 	functionCall_escaped(_1, character)
 	{
+		// A stray @[ reaches here only when --inline/--parsed failed to open a block
+		// (unclosed, or bare [ ] in the content). Desugaring it back to a literal @[
+		// would re-open an inline block on re-parse, so rewrite it to the raw escape
+		// @{[}, which yields a literal [ and can't be read as a block opener.
+		if (character.sourceString === "[")
+		{
+			return "@{[}";
+		}
+
 		return this.sourceString;
 	},
 
@@ -637,7 +672,9 @@ const desugarOperation = {
 
 	parsedBlockEscapable(character)
 	{
-		return `@${character.desugar()}`;
+		// Raw-mode escape (@{[} / @{]}) rather than @[ / @], since @[ now opens an
+		// inline identity block. The raw block emits the bracket literally.
+		return `@{${character.desugar()}}`;
 	},
 
 	rawBlockEscapable(character)
@@ -717,6 +754,25 @@ function compileArgument(block)
 		: "`" + inner + "`";
 }
 
+// Shared by the @[[...]] / @[...] identity calls (functionCall_parsed/_inline).
+// `node` is the functionCall node, `block` its parsed/inline block. Stores the
+// block's rendered content (a template literal, so nested ${...} call results
+// flow through) under the call's startIdx and returns the ${storage[id]}
+// placeholder, exactly like a wrapped/bare call but with no function applied —
+// the identity. block.getCode() also emits the inner calls' assignments.
+function identityBlockCode(node, block)
+{
+	const startIdx = node.source.startIdx + getCodeOffset;
+	const id = JSON.stringify(startIdx);
+	// Resolve block.getCode() into a local *before* the `codeToExecute +=`: it
+	// appends the inner calls' assignments as a side effect, and a compound
+	// assignment reads codeToExecute's old value before evaluating the RHS, so
+	// inlining the call would discard those inner assignments.
+	const inner = block.getCode();
+	codeToExecute += `${storageName}[${id}] = \`${inner}\`;\n`;
+	return "${" + storageName + "[" + id + "]}";
+}
+
 const getCodeOperation = {
 	declarationBlock(_1, _2, _3, scope, _4, _5, body, _6)
 	{
@@ -787,6 +843,25 @@ const getCodeOperation = {
 		codeToExecute += `${storageName}[${id}] = ${rhs};\n`;
 
 		return "${" + storageName + "[" + id + "]}";
+	},
+
+	// @[[...]] / @[...]: identity on a parsed / inline block. Unlike @{...} (whose
+	// body is parsed in place, so insertCodeOutput can descend and the rawBlock
+	// handler drops the braces), a parsedBlock body is stored as raw text that
+	// getCode must re-match — its inner calls live in that throwaway re-match, out
+	// of insertCodeOutput's reach. So compile both like a real call: store the
+	// rendered block under this call's id (a backtick-wrapped template literal, no
+	// delimiters) and emit ${storage[id]}; insertCodeOutput then looks it up. No
+	// location is captured — the identity itself can't throw; inner calls carry
+	// their own locations.
+	functionCall_parsed(_1, _2, block)
+	{
+		return identityBlockCode(this, block);
+	},
+
+	functionCall_inline(_1, _2, block)
+	{
+		return identityBlockCode(this, block);
 	},
 
 	functionCall_raw(_1, _2, block)
@@ -907,6 +982,21 @@ const insertCodeOutputOperation = {
 	},
 
 	functionCall_bare(_1, _2, name, spaceOrTabPaddedBlocks)
+	{
+		const id = JSON.stringify(this.source.startIdx);
+		return this.args.__spruceOutput[id];
+	},
+
+	// Identity calls: look up the rendered block stored by getCode, just like a
+	// wrapped/bare call. (Descending instead would re-emit the [[ ]] / [ ]
+	// delimiters and, for a parsedBlock, its un-rendered raw-text body.)
+	functionCall_parsed(_1, _2, block)
+	{
+		const id = JSON.stringify(this.source.startIdx);
+		return this.args.__spruceOutput[id];
+	},
+
+	functionCall_inline(_1, _2, block)
 	{
 		const id = JSON.stringify(this.source.startIdx);
 		return this.args.__spruceOutput[id];
