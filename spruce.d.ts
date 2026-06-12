@@ -9,6 +9,13 @@ export interface CompileOptions {
 	 * directory.
 	 */
 	filePath?: string | null;
+	/**
+	 * Path to a JS file whose named exports are made available to the document.
+	 * These override the built-in stdlib but are still shadowed by functions
+	 * declared or imported in a declaration block. Resolved relative to the
+	 * current working directory.
+	 */
+	standardLibrary?: string | null;
 }
 
 /**

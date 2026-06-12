@@ -485,32 +485,14 @@ function detectIndent(text) {
 	return m[1][0] === "\t" ? "\t" : m[1];
 }
 
-// Measure the leading run of `import` lines at the top of a declaration-block
-// body (imports are single-line here, matching the rest of this module).
-// `endOffset` is the offset within the body just past the last import line's
-// newline (where a new import is appended and where the import/code boundary
-// sits); `needsBlank` is true when a non-import statement follows that run with
-// no blank line separating it — the gap an added import should open up.
-function leadingImportRun(body) {
-	const lines = body.split("\n");
-	let endOffset = 0;
-	let i = 0;
-	for (; i < lines.length; i++) {
-		if (!/^[ \t]*import\b/.test(lines[i])) break;
-		endOffset += lines[i].length + 1;
-	}
-	const followingIsBlank = lines[i] !== undefined && lines[i].trim() === "";
-	const hasCodeAfter = lines.slice(i).some(l => l.trim() !== "");
-	return { endOffset, needsBlank: hasCodeAfter && !followingIsBlank };
-}
-
-// A blank-line insertion edit (or none) keeping one blank line between `block`'s
-// import run and the first non-import statement after it. No-op when they're
-// already separated or the block has no non-import statement.
-function blankLineSeparatorEdits(text, block) {
-	const { endOffset, needsBlank } = leadingImportRun(text.slice(block.bodyStart, block.bodyEnd));
-	if (!needsBlank) return [];
-	const at = block.bodyStart + endOffset;
+// A blank-line insertion edit (or none) keeping one blank line between the edited
+// import line (ending at `body[lineEnd - 1]` === "\n") and the next statement, if
+// any. No-op when they're already separated, or when the import is the last
+// non-blank line in the block (the declaration block ends on the following line).
+function blankLineSeparatorEdits(body, bodyStart, lineEnd) {
+	const rest = body.slice(lineEnd);
+	if (rest.trim() === "" || rest.startsWith("\n")) return [];
+	const at = bodyStart + lineEnd;
 	return [{ start: at, end: at, newText: "\n" }];
 }
 
@@ -560,11 +542,13 @@ export function buildImportEdits(text, specifier, name) {
 		bindings.sort((a, b) => bindingKey(a).localeCompare(bindingKey(b)));
 		const groupStart = block.bodyStart + m.index + m[0].indexOf("{");
 		const groupEnd = block.bodyStart + m.index + m[0].indexOf("}") + 1;
+		const nl = body.indexOf("\n", m.index + m[0].length);
+		const lineEnd = nl === -1 ? body.length : nl + 1;
 		// The group replace and the (offset-disjoint) blank-line separator both land
 		// in this block; return them together.
 		return [
 			{ start: groupStart, end: groupEnd, newText: `{ ${bindings.join(", ")} }` },
-			...blankLineSeparatorEdits(text, block),
+			...blankLineSeparatorEdits(body, block.bodyStart, lineEnd),
 		];
 	}
 

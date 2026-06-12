@@ -1303,9 +1303,12 @@ process.on("SIGHUP", () => process.exit(129));
 let compileQueue = Promise.resolve();
 
 // Compile `content` to `outputFormat`, returning the rendered string. `options`
-// is an object: { raw, preserveWhitespace, filePath }. `filePath` (default null)
-// is the document's absolute path, exposed to the document as the `filePath`
-// global and used to resolve declaration-block imports relative to its directory.
+// is an object: { raw, preserveWhitespace, filePath, standardLibrary }. `filePath`
+// (default null) is the document's absolute path, exposed to the document as the
+// `filePath` global and used to resolve declaration-block imports relative to its
+// directory. `standardLibrary` (default null) is a path to a JS file whose named
+// exports are made available to the document, overriding the built-in stdlib but
+// still shadowable by declaration-block declarations and imports.
 export function compile(content, outputFormat, options = {})
 {
 	const next = compileQueue.then(() => _compileImpl(content, outputFormat, options));
@@ -1313,7 +1316,7 @@ export function compile(content, outputFormat, options = {})
 	return next;
 }
 
-async function _compileImpl(input, outputFormat, { raw = false, preserveWhitespace: preserveWs = false, filePath = null } = {})
+async function _compileImpl(input, outputFormat, { raw = false, preserveWhitespace: preserveWs = false, filePath = null, standardLibrary = null } = {})
 {
 	// Trimming of parsed-block bodies is the default; preserveWhitespace
 	// keeps them raw. Set before any desugaring so the block handlers see it.
@@ -1352,8 +1355,43 @@ async function _compileImpl(input, outputFormat, { raw = false, preserveWhitespa
 	// and restore it when compile() returns.
 	setGlobal("JSON5", JSON5);
 
+	// Post-compile hooks (e.g. `document`) exported by the user standard library.
+	// Collected rather than splatted as globals because these run on the host after
+	// the module — like the stdlib hooks — so they can't be reached as inline calls.
+	// They beat the stdlib default but lose to a declaration-block override.
+	const standardLibraryHooks = {};
+
 	try
 	{
+		// Load the optional user standard library (-l / standardLibrary): its named
+		// exports override the built-in stdlib by being splatted onto globalThis
+		// *after* it, while still being shadowed by anything a declaration block
+		// declares or imports (those live in the generated module's scope). Done
+		// inside the try so a load failure is still cleaned up by the finally below.
+		if (standardLibrary)
+		{
+			let standardLibraryModule;
+			try
+			{
+				standardLibraryModule = await import(pathToFileURL(resolvePath(standardLibrary)).href);
+			}
+			catch (ex)
+			{
+				throw new Error(`Couldn't load the standard library "${standardLibrary}": ${ex.message}`);
+			}
+
+			for (const [key, value] of Object.entries(standardLibraryModule))
+			{
+				if (key === "default") continue;
+				if (POST_COMPILE_HOOKS.includes(key))
+				{
+					standardLibraryHooks[key] = value;
+					continue;
+				}
+				setGlobal(key, value);
+			}
+		}
+
 		// Build the grammar for this input's hash depth and make it active before
 		// any matching. Desugaring only ever reduces hash depth, so the same
 		// grammar parses both the original input and the desugared output.
@@ -1380,7 +1418,8 @@ async function _compileImpl(input, outputFormat, { raw = false, preserveWhitespa
 		const hookOverrides = __spruceOutput?.[HOOK_OVERRIDES_KEY] ?? {};
 		for (const name of POST_COMPILE_HOOKS)
 		{
-			const hook = hookOverrides[name] ?? formatStdlib?.[name];
+			// Priority: declaration-block override > standard library > stdlib default.
+			const hook = hookOverrides[name] ?? standardLibraryHooks[name] ?? formatStdlib?.[name];
 			if (typeof hook === "function")
 			{
 				result = hook(result);
@@ -1409,6 +1448,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 	let formatOverride = null;
 	let rawMode = false;
 	let preserveWs = false;
+	let standardLibrary = null;
 
 	for (let i = 0; i < argv.length; i++)
 	{
@@ -1425,6 +1465,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 		{
 			preserveWs = true;
 		}
+		else if (arg === "-l" || arg === "--standard-library")
+		{
+			standardLibrary = argv[++i];
+		}
 		else
 		{
 			positional.push(arg);
@@ -1435,7 +1479,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 
 	if (!inputPath || !outputPath)
 	{
-		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--raw] [-w|--preserve-whitespace]\n");
+		process.stderr.write("usage: spruce <input> <output> [-f|--format <format>] [-r|--raw] [-w|--preserve-whitespace] [-l|--standard-library <file>]\n");
 		process.exit(1);
 	}
 
@@ -1451,6 +1495,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
 			raw: rawMode,
 			preserveWhitespace: preserveWs,
 			filePath: resolvePath(inputPath),
+			standardLibrary: standardLibrary ? resolvePath(standardLibrary) : null,
 		});
 		await writeFile(outputPath, result);
 	}

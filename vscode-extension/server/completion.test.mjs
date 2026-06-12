@@ -332,6 +332,12 @@ test("buildImportEdits adds no blank line when the block has no non-import state
 	assert.equal(out, '@@@\nimport { a } from "./a.js";\n\timport { foo } from "./x.js";\n@@@\n');
 });
 
+test("buildImportEdits adds no blank line when the extended import is the last line in the block, even after other code", () => {
+	const doc = '@@@\nconst y = 1;\nimport { a } from "./x.js";\n@@@\n';
+	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));
+	assert.equal(out, '@@@\nconst y = 1;\nimport { a, foo } from "./x.js";\n@@@\n');
+});
+
 test("buildImportEdits separates an extended group from following code", () => {
 	const doc = '@@@\nimport { a } from "./x.js";\nconst y = 1;\n@@@\n';
 	const out = applyEdits(doc, buildImportEdits(doc, "./x.js", "foo"));

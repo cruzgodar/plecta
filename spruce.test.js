@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { test } from "node:test";
 import { compile } from "./spruce.js";
 import { stdlib } from "./stdlib.js";
@@ -131,6 +134,83 @@ test("block: declaration block alone produces empty output", async () =>
 	assert.equal(
 		await compile(`@@@html\nfunction f() { return "x"; }\n@@@`, "html"),
 		"",
+	);
+});
+
+
+// ============================================================================
+// Standard library (-l / standardLibrary)
+// ============================================================================
+
+// Write a JS module to a fresh temp dir and return its absolute path. The dir is
+// removed in an after-each-style cleanup the test registers itself.
+function writeStandardLibrary(source)
+{
+	const dir = mkdtempSync(joinPath(tmpdir(), "spruce-sl-"));
+	const path = joinPath(dir, "stdlib.mjs");
+	writeFileSync(path, source);
+	return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test("standard library: a named export is callable in the document", async (t) =>
+{
+	const { path, cleanup } = writeStandardLibrary(`export function f() { return "R"; }`);
+	t.after(cleanup);
+	assert.equal(await compile("@f", "html", { standardLibrary: path }), "R");
+});
+
+test("standard library: overrides the built-in stdlib", async (t) =>
+{
+	const { path, cleanup } = writeStandardLibrary(`export function paragraph(body) { return "<P>" + body + "</P>"; }`);
+	t.after(cleanup);
+	assert.equal(await compile("hi", "html", { standardLibrary: path }), "<P>hi</P>");
+});
+
+test("standard library: a declaration-block import overrides it", async (t) =>
+{
+	const { path, cleanup } = writeStandardLibrary(`export function f() { return "from-lib"; }`);
+	t.after(cleanup);
+
+	const imported = writeStandardLibrary(`export function f() { return "from-import"; }`);
+	t.after(imported.cleanup);
+
+	assert.equal(
+		await compile(`@@@html\nimport { f } from ${JSON.stringify(imported.path)};\n@@@\n@f`, "html", { standardLibrary: path }),
+		"\nfrom-import",
+	);
+});
+
+test("standard library: a declaration-block declaration overrides it", async (t) =>
+{
+	const { path, cleanup } = writeStandardLibrary(`export function f() { return "from-lib"; }`);
+	t.after(cleanup);
+	assert.equal(
+		await compile(`@@@html\nfunction f() { return "from-decl"; }\n@@@\n@f`, "html", { standardLibrary: path }),
+		"\nfrom-decl",
+	);
+});
+
+test("standard library: a document hook beats the stdlib default but loses to a declaration block", async (t) =>
+{
+	stdlib.html.document = body => `STDLIB[${body}]`;
+	t.after(() => { delete stdlib.html.document; });
+
+	const { path, cleanup } = writeStandardLibrary(`export function document(body) { return "LIB[" + body + "]"; }`);
+	t.after(cleanup);
+
+	assert.equal(await compile("x", "html", { standardLibrary: path }), "LIB[<p>x</p>]");
+
+	assert.equal(
+		await compile(`@@@html\nfunction document(b) { return "DECL[" + b + "]"; }\n@@@\nx`, "html", { standardLibrary: path }),
+		"DECL[\n<p>x</p>]",
+	);
+});
+
+test("standard library: a missing file raises a clear error", async () =>
+{
+	await assert.rejects(
+		compile("@f", "html", { standardLibrary: joinPath(tmpdir(), "does-not-exist-spruce.mjs") }),
+		/Couldn't load the standard library/,
 	);
 });
 
